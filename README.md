@@ -52,7 +52,7 @@ Agent Engine
 
 ## Status
 
-Phase 7: AI Provider Abstraction (current)
+Phase 8: VS Code Extension (current)
 
 Deterministic core (Phases 1–6) works fully without AI. AI planning is optional.
 
@@ -102,6 +102,20 @@ resolveit run --ai external
 `resolveit ai` shows provider, model, availability, and base URL.
 API keys are never printed. If the provider is unavailable or its output is
 unusable, ResolveIt falls back to deterministic planning with an explicit notice.
+
+## VS Code Extension
+
+A thin client lives in `vscode/` (see `vscode/README.md`). It exposes Core
+capabilities (scan, diagnose, run, environment, requirements, repair, verify)
+through commands, Explorer views, approval dialogs, progress notifications, and
+a status bar item. All business logic stays in ResolveIt Core.
+
+```bash
+cd vscode
+npm install
+npm run build
+npm test
+```
 
 ## Development
 

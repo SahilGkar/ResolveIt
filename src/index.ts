@@ -58,6 +58,18 @@ export {
   RepairToolRegistry,
   RepairExecutionResult,
   RollbackResult,
+  RepairResult,
+  AIProposedAction,
+  AIPlanningResult,
+  AIPlanningContext,
+  AIWorkspaceSummary,
+  AIEnvironmentSummary,
+  AIRequirementSummary,
+  AIDiagnosticSummary,
+  AIToolDescriptor,
+  AIPlanningConstraints,
+  AIPreviousAttempt,
+  AIVerificationSummary,
 } from './core/models.js';
 
 export {
@@ -95,6 +107,8 @@ export {
 } from './core/interfaces.js';
 
 export { NoAIProvider, AIProviderConfig, LocalAIConfig, ExternalAIConfig, createAIProvider, AIProviderType } from './ai/providers.js';
+
+export type { AIConfig, SanitizedAIConfig } from './ai/config.js';
 
 export { DEFAULT_PERMISSION_POLICY, getActionRiskLevel, checkPermission, PermissionManagerImpl } from './safety/permission.js';
 
@@ -198,6 +212,34 @@ export {
   createAgentRunner,
   DEFAULT_MAX_ITERATIONS,
   createAIPlanner,
+} from './agent/index.js';
+
+export type {
+  AgentRunState,
+  AgentObservation,
+  AgentAnalysis,
+  PlannedManualAction,
+  PlanningInput,
+  DeterministicPlan,
+  VerificationReport,
+  VerificationEvidence,
+  TargetedCheck,
+  AgentRunnerDeps,
+  AgentRunOptions,
+  AgentRunResult,
+  AgentRunStatus,
+  AgentRunContext,
+  ApprovalRecord,
+  ExecutedActionRecord,
+  ObserverFn,
+  AnalyzerFn,
+  PlannerFn,
+  PlanExecutor,
+  VerificationEngineVerifyPlan,
+  AgentEvent,
+  AgentEventType,
+  AgentEventCallback,
+  AIPlannerCallbacks,
 } from './agent/index.js';
 
 export {

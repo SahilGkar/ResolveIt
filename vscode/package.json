@@ -1,0 +1,142 @@
+{
+  "name": "resolveit",
+  "displayName": "ResolveIt",
+  "description": "Language-agnostic project environment diagnosis and resolution (thin client over ResolveIt Core)",
+  "version": "0.0.1",
+  "publisher": "resolveit-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/opencode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:resolveit.scan",
+    "onCommand:resolveit.diagnose",
+    "onCommand:resolveit.run",
+    "onCommand:resolveit.environment",
+    "onCommand:resolveit.requirements",
+    "onCommand:resolveit.repair",
+    "onCommand:resolveit.verify",
+    "workspaceContains:package.json",
+    "workspaceContains:pyproject.toml",
+    "workspaceContains:go.mod",
+    "workspaceContains:Cargo.toml",
+    "workspaceContains:pom.xml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "resolveit.scan",
+        "title": "ResolveIt: Scan Project"
+      },
+      {
+        "command": "resolveit.diagnose",
+        "title": "ResolveIt: Diagnose Project"
+      },
+      {
+        "command": "resolveit.run",
+        "title": "ResolveIt: Run ResolveIt"
+      },
+      {
+        "command": "resolveit.environment",
+        "title": "ResolveIt: Show Environment"
+      },
+      {
+        "command": "resolveit.requirements",
+        "title": "ResolveIt: Show Requirements"
+      },
+      {
+        "command": "resolveit.repair",
+        "title": "ResolveIt: Repair"
+      },
+      {
+        "command": "resolveit.verify",
+        "title": "ResolveIt: Verify"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "resolveit.project",
+          "name": "ResolveIt"
+        },
+        {
+          "id": "resolveit.diagnostics",
+          "name": "ResolveIt Diagnostics"
+        },
+        {
+          "id": "resolveit.environment",
+          "name": "ResolveIt Environment"
+        },
+        {
+          "id": "resolveit.requirements",
+          "name": "ResolveIt Requirements"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ResolveIt",
+      "properties": {
+        "resolveit.ai.provider": {
+          "type": "string",
+          "enum": [
+            "none",
+            "local",
+            "external"
+          ],
+          "default": "none",
+          "description": "AI provider for assisted planning. Deterministic core works without AI."
+        },
+        "resolveit.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "AI model name for the local or external provider."
+        },
+        "resolveit.ai.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "AI provider base URL (Ollama-compatible local endpoint or OpenAI-compatible gateway)."
+        },
+        "resolveit.ai.timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "AI provider request timeout in milliseconds."
+        },
+        "resolveit.maxIterations": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum agent repair iterations before reporting failure."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run typecheck && npm run bundle",
+    "typecheck": "tsc --noEmit",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --log-level=warning",
+    "test": "vitest run",
+    "pretest": "npm run build",
+    "lint": "eslint src",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^8.55.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "uuid": "^14.0.2"
+  }
+}

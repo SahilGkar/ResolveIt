@@ -254,6 +254,46 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 8 Status (Implemented): VS Code Extension
+
+The extension (`vscode/`) is a thin client over ResolveIt Core:
+
+```text
+VS Code Extension
+  activation, commands, tree views, dialogs, progress, status bar, output channel
+        │  direct TypeScript import, esbuild bundle (`vscode` external)
+        ▼
+ResolveIt Core (`src/index.ts`)
+  Discovery · Environment · Requirements · Diagnostics · Repairs ·
+  Verification · Agent · AI Providers
+```
+
+- **Manifest** (`vscode/package.json`): 7 commands (`resolveit.scan`, `resolveit.diagnose`,
+  `resolveit.run`, `resolveit.environment`, `resolveit.requirements`, `resolveit.repair`,
+  `resolveit.verify`), 4 Explorer views (project, diagnostics, environment, requirements),
+  settings (`resolveit.ai.provider|model|baseUrl|timeout`, `resolveit.maxIterations`),
+  activation on commands or common manifests. No marketplace publication.
+- **Core integration** (`vscode/src/core.ts`): `CoreClient` thin wrappers over Core
+  exports only — no duplicated engines. Agent runs reuse `AgentRunner` + AI planner;
+  verification compares fresh diagnostics against previous ones via stable keys.
+- **UI**: diagnostics tree grouped Critical/Errors/Warnings/Info with message,
+  evidence, expected/actual, file open (`vscode.open`), and remediation display;
+  environment/requirements trees render Phase 2/3 output; repair plans print to the
+  `ResolveIt` output channel with per-action QuickPick approval (`Allow`/`Deny`);
+  agent `onEvent` callbacks drive `withProgress` notifications and the status bar
+  (`✓`, `⚠ n issues`, `⏳ activity`); AI status shows provider/model/URL/availability,
+  never keys.
+- **Safety preserved**: approvals are collected, not granted, by the UI; Core
+  `PermissionManager`/`RepairExecutor` remain authoritative; secrets redacted from logs.
+- **Tests**: `vscode/tests/` run under vitest with a mocked `vscode` API (alias),
+  covering commands, workspace none/single/multi handling, core integration,
+  diagnostic/severity mapping, approval, event→UI mapping, AI/config mapping, error
+  handling — plus a bundle smoke test proving the packaged `dist/extension.js`
+  activates. No VS Code instance required.
+- **Build**: `cd vscode && npm install && npm run build` (typecheck + esbuild bundle);
+  VS Code-only dependencies (`@types/vscode`, `esbuild`, `vitest`, `uuid` for the
+  bundled core) stay inside `vscode/`.
+
 ## Phase 7 Status (Implemented): AI Provider Abstraction
 
 > AI is optional. ResolveIt's deterministic core works without AI.
