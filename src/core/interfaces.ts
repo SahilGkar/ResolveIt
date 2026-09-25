@@ -41,6 +41,14 @@ import type {
   RuntimeRequirement,
   ToolchainRequirement,
   ContainerRequirement,
+  DiagnosticSeverity,
+  DiagnosticCategory,
+  DiagnosticEvidence,
+  RemediationCandidate,
+  EnvironmentInfo,
+  OSInfo,
+  ContainerInfo,
+  ToolInstallation,
 } from './models.js';
 
 export type {
@@ -86,6 +94,14 @@ export type {
   RuntimeRequirement,
   ToolchainRequirement,
   ContainerRequirement,
+  DiagnosticSeverity,
+  DiagnosticCategory,
+  DiagnosticEvidence,
+  RemediationCandidate,
+  EnvironmentInfo,
+  OSInfo,
+  ContainerInfo,
+  ToolInstallation,
 };
 
 export interface WorkspaceManager {
@@ -155,8 +171,13 @@ export interface CommandResult {
 
 export interface DiagnosticEngine {
   runDiagnostics(workspace: Workspace): Promise<ReadonlyArray<Diagnostic>>;
-  runDiagnosticsForProject(project: Project): Promise<ReadonlyArray<Diagnostic>>;
-  registerDiagnosticSource(source: DiagnosticSource): void;
+  runDiagnosticsWithContext(
+    workspace: Workspace,
+    environment: EnvironmentInfo,
+    requirements: ReadonlyArray<ParsedRequirements>
+  ): Promise<ReadonlyArray<Diagnostic>>;
+  registerRule(rule: DiagnosticRule): void;
+  getRules(): ReadonlyArray<DiagnosticRule>;
 }
 
 export interface DiagnosticSource {
@@ -333,4 +354,41 @@ export interface RequirementManager {
   discoverRequirements(workspaceRoot: string): Promise<ReadonlyArray<ParsedRequirements>>;
   getRequirements(projectId: string): ReadonlyArray<ProjectRequirement>;
   registerParser(parser: RequirementParser): void;
+}
+
+// Phase 4: Diagnostic Engine interfaces
+export interface VersionMatcher {
+  matches(constraint: string, version: string): VersionMatchResult;
+  compare(a: string, b: string): number;
+}
+
+export type VersionMatchResult =
+  | { satisfied: true; reason?: string }
+  | { satisfied: false; reason: string }
+  | { satisfied: false; reason: 'unknown'; details: string };
+
+export interface DiagnosticRule {
+  readonly id: string;
+  readonly name: string;
+  readonly category: DiagnosticCategory;
+  readonly severity: DiagnosticSeverity;
+  diagnose(context: DiagnosticContext): Promise<ReadonlyArray<Diagnostic>>;
+}
+
+export interface DiagnosticContext {
+  readonly workspace: Workspace;
+  readonly environment: EnvironmentInfo;
+  readonly requirements: ReadonlyArray<ParsedRequirements>;
+  readonly versionMatcher: VersionMatcher;
+}
+
+export interface DiagnosticEngine {
+  runDiagnostics(workspace: Workspace): Promise<ReadonlyArray<Diagnostic>>;
+  runDiagnosticsWithContext(
+    workspace: Workspace,
+    environment: EnvironmentInfo,
+    requirements: ReadonlyArray<ParsedRequirements>
+  ): Promise<ReadonlyArray<Diagnostic>>;
+  registerRule(rule: DiagnosticRule): void;
+  getRules(): ReadonlyArray<DiagnosticRule>;
 }

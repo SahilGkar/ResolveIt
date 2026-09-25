@@ -3,6 +3,7 @@ import { version } from '../version.js';
 import { scanWorkspace } from '../scanners/index.js';
 import { scanEnvironment, environmentInfoToJSON, formatEnvironmentSummary } from '../environment/index.js';
 import { scanRequirements, reqInfoToJSON, formatRequirementsSummary } from '../requirements/index.js';
+import { diagnose, formatDiagnosticsSummary, diagnosticsToJSON } from '../diagnostics/index.js';
 import type { Workspace, Language, ProjectMarker } from '../core/models.js';
 
 export const program = new Command();
@@ -86,6 +87,27 @@ program
         console.log(reqInfoToJSON(result));
       } else {
         console.log(formatRequirementsSummary(result));
+      }
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('diagnose')
+  .description('Run diagnostic engine on workspace')
+  .option('-j, --json', 'Output as JSON')
+  .option('-t, --timeout <number>', 'Timeout in milliseconds', '60000')
+  .option('-p, --path <path>', 'Workspace path', '.')
+  .action(async (options: { json: boolean; timeout: string; path: string }) => {
+    try {
+      const result = await diagnose({ workspaceRoot: options.path, timeout: parseInt(options.timeout, 10) });
+      
+      if (options.json) {
+        console.log(diagnosticsToJSON(result));
+      } else {
+        console.log(formatDiagnosticsSummary(result));
       }
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

@@ -178,14 +178,52 @@ export interface Diagnostic {
   readonly id: string;
   readonly code: string;
   readonly severity: DiagnosticSeverity;
+  readonly category: DiagnosticCategory;
+  readonly title: string;
   readonly message: string;
+  readonly evidence: ReadonlyArray<DiagnosticEvidence>;
+  readonly affectedFiles?: ReadonlyArray<string>;
+  readonly requirement?: ProjectRequirement;
+  readonly actualValue?: unknown;
+  readonly expectedValue?: unknown;
+  readonly remediationCandidates?: ReadonlyArray<RemediationCandidate>;
   readonly location?: DiagnosticLocation;
   readonly source: DiagnosticSource;
   readonly timestamp: Date;
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
-export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
+export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint' | 'critical';
+
+export type DiagnosticCategory =
+  | 'runtime'
+  | 'dependency'
+  | 'toolchain'
+  | 'build'
+  | 'container'
+  | 'configuration'
+  | 'project'
+  | 'environment'
+  | 'unknown';
+
+export interface DiagnosticEvidence {
+  readonly source: 'project' | 'environment' | 'requirement' | 'computed';
+  readonly description: string;
+  readonly key?: string;
+  readonly expected?: unknown;
+  readonly actual?: unknown;
+  readonly file?: string;
+  readonly section?: string;
+}
+
+export interface RemediationCandidate {
+  readonly id: string;
+  readonly type: RepairActionType;
+  readonly description: string;
+  readonly confidence: number;
+  readonly riskLevel: RiskLevel;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
 
 export interface DiagnosticLocation {
   readonly file: string;

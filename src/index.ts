@@ -23,6 +23,9 @@ export {
   EnvironmentType,
   RequirementType,
   DiagnosticSeverity,
+  DiagnosticCategory,
+  DiagnosticEvidence,
+  RemediationCandidate,
   DiagnosticSource,
   RepairActionType,
   ToolCapability,
@@ -87,6 +90,9 @@ export {
   EnvironmentSnapshot,
   RequirementParser,
   RequirementManager,
+  VersionMatcher,
+  DiagnosticRule,
+  DiagnosticContext,
 } from './core/interfaces.js';
 
 export { NoAIProvider, AIProviderConfig, LocalAIConfig, ExternalAIConfig, createAIProvider, AIProviderType } from './ai/providers.js';
@@ -145,3 +151,18 @@ export {
   createRequirementManager,
   type RequirementScannerOptions,
 } from './requirements/index.js';
+
+export {
+  diagnose,
+  formatDiagnosticsSummary,
+  diagnosticsToJSON,
+  createDiagnosticEngine,
+  versionMatcher,
+  runtimeDiagnosticRule,
+  toolchainDiagnosticRule,
+  containerDiagnosticRule,
+  dependencyDiagnosticRule,
+  buildDiagnosticRule,
+  projectDiagnosticRule,
+  type DiagnoseOptions,
+} from './diagnostics/index.js';
