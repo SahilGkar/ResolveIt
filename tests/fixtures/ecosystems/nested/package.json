@@ -1,0 +1,8 @@
+{
+  "name": "repo-root",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}

@@ -1,0 +1,7 @@
+# Production dependencies
+requests>=2.31,<4
+flask==3.0.0
+gunicorn; sys_platform != 'win32'
+
+# Not a requirement line below (option flag)
+-r other-requirements.txt

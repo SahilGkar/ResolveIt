@@ -212,6 +212,30 @@ export class DeterministicRepairPlanner {
 
     if (diagnostic.category === 'dependency' && diagnostic.requirement?.type === 'package-dependency') {
       const requirement = diagnostic.requirement;
+      if (requirement.origin === 'lockfile' || requirement.origin === 'transitive') {
+        return {
+          executable: [],
+          manual: [
+            manualFor(
+              diagnostic,
+              `Locked/transitive package ${requirement.name} is managed through its manifest, not installed directly`,
+              'project-modification'
+            ),
+          ],
+        };
+      }
+      if (requirement.metadata?.indirect === true) {
+        return {
+          executable: [],
+          manual: [
+            manualFor(
+              diagnostic,
+              `Indirect dependency ${requirement.name} is managed through its direct dependents`,
+              'project-modification'
+            ),
+          ],
+        };
+      }
       const ecosystem = ECOSYSTEM_TO_PACKAGE_MANAGER[requirement.ecosystem];
       if (!ecosystem) {
         return {

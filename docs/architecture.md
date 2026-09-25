@@ -254,6 +254,59 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 10 Status (Implemented): Multi-Ecosystem Hardening
+
+### Project detection and multi-project model
+
+Manifest discovery (`RequirementManagerImpl.findRelevantFiles`) matches basenames
+and relative paths against an extended pattern list (lockfiles, `go.work`,
+`meson.build`, `conanfile.*`, `vcpkg.json`, `*.gemspec`, `composer.lock`,
+`global.json`, `packages.config`, `Directory.Packages.props`,
+`libs.versions.toml`, wrapper properties, `compose.*`, …) with shared
+case-insensitive wildcard matching (`src/requirements/projects.ts`).
+
+Each discovered manifest is attributed to the nearest ancestor manifest directory
+(`assignProject`); nested projects keep their own `projectId`/`projectRoot` and
+files are never double-counted. Results are sorted by source file and deduplicated
+within each file, so repeated scans produce identical output. The scanner's
+workspace/project listing is unchanged; attribution lives in the requirement layer.
+
+### Ecosystem analyzer registry
+
+One parser class per format family, registered by filename (`RequirementParser`
+interface unchanged): Python (requirements/PEP 621/poetry/setup.cfg/static
+setup.py/Pipfile/locks), Node (manifest + npm/yarn/pnpm/bun lockfiles + volta
+pins), Maven (properties resolution, managed-scope exclusion, parent, wrapper),
+Gradle (toolchain DSL, version catalog, wrapper, duplicate elimination, dynamic
+markers), Go (`go.mod` blocks/indirect/replace/exclude, `go.work`), Rust
+(hyphenated names, workspace inheritance without invented versions, members,
+`Cargo.lock`), CMake (`find_package` versions/components, standards, languages),
+Meson/Conan/vcpkg, Ruby (Gemfile/groups/gemspec/`Gemfile.lock`), PHP
+(`ext-*` system tools, dev sections, both lock sections), .NET
+(multi-framework, SDK pins, central packages, solutions, legacy configs), Docker
+(digests, platforms, registries with ports, build args, compose builds).
+`setup.py` is never executed: dynamic declarations yield an explicit
+`DYNAMIC_DECLARATION` warning.
+
+### Normalized requirements and lockfiles
+
+`ProjectRequirement` gains optional `resolvedVersion`, `origin`
+(`direct`/`transitive`/`lockfile`), and `lockfileSource`; requested ranges stay in
+`versionConstraint`. Lockfile/transitive entries are never proposed for direct
+installation by the deterministic planner (manual guidance instead).
+Version matching normalizes `v` prefixes, `===`, wildcards (`1.2.x`, `1.*`,
+`1.+`), `||` unions, hyphen ranges, Maven `[a,b)` ranges, Gradle dynamic
+markers, and PEP 440 compatible releases, with prefix semantics for bare partial
+versions (`go 1.22` matches `1.22.x`). The matcher interface is unchanged.
+
+### Deterministic diagnostics
+
+Improved requirements flow through the existing engine untouched: runtime,
+toolchain, container, dependency, build, and project rules plus an informational
+cross-project rule that notes exact-version runtime divergence across projects
+without inventing relationships. Identical requirements in nested projects keep
+collapsing to one diagnostic via the existing dedup key.
+
 ## Phase 9 Status (Implemented): Extension ↔ Core Integration Hardening
 
 The extension stays a thin client; Phase 9 hardens the orchestration boundary
@@ -541,3 +594,7 @@ permissions, and stops before modifications. Normal execution still requires exp
 - `AuditLoggerImpl.query` is a stub returning no results.
 - The deterministic agent loop retries up to `maxIterations` (default 3); beyond that,
   unresolved runs fail with an explanation rather than retrying indefinitely.
+- Requirement parsing is static: dynamic `setup.py` logic, Gradle Kotlin/Groovy
+  expressions, and arbitrary CMake code degrade to explicit warnings rather than
+  invented versions. There is no universal semantic version solver; `go.sum`
+  integrity files and binary `bun.lockb` files are recognized but not parsed.

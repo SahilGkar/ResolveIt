@@ -7,7 +7,8 @@ import {
   containerDiagnosticRule, 
   dependencyDiagnosticRule, 
   buildDiagnosticRule, 
-  projectDiagnosticRule 
+  projectDiagnosticRule,
+  crossProjectDiagnosticRule
 } from './rules/index.js';
 import { scanWorkspace } from '../scanners/index.js';
 import { scanEnvironment } from '../environment/index.js';
@@ -149,5 +150,6 @@ export {
   dependencyDiagnosticRule,
   buildDiagnosticRule,
   projectDiagnosticRule,
+  crossProjectDiagnosticRule,
 };
 export type { DiagnosticRule, VersionMatcher, DiagnosticContext };

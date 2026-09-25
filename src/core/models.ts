@@ -565,6 +565,8 @@ export interface ContainerInfo {
 }
 
 // Phase 3: Requirement & Dependency Intelligence types
+export type RequirementOrigin = 'direct' | 'transitive' | 'lockfile';
+
 export interface ProjectRequirement {
   readonly id: string;
   readonly ecosystem: string;
@@ -572,6 +574,9 @@ export interface ProjectRequirement {
   readonly name: string;
   readonly versionConstraint?: string;
   readonly rawConstraint?: string;
+  readonly resolvedVersion?: string;
+  readonly origin?: RequirementOrigin;
+  readonly lockfileSource?: string;
   readonly sourceFile: string;
   readonly sourceSection?: string;
   readonly optional?: boolean;
@@ -592,6 +597,7 @@ export type ProjectRequirementType =
 
 export interface ParsedRequirements {
   readonly projectId: string;
+  readonly projectRoot?: string;
   readonly sourceFiles: ReadonlyArray<string>;
   readonly requirements: ReadonlyArray<ProjectRequirement>;
   readonly parseErrors: ReadonlyArray<RequirementParseError>;

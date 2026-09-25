@@ -4,3 +4,4 @@ export { containerDiagnosticRule } from './container.js';
 export { dependencyDiagnosticRule } from './dependency.js';
 export { buildDiagnosticRule } from './build.js';
 export { projectDiagnosticRule } from './project.js';
+export { crossProjectDiagnosticRule } from './cross-project.js';

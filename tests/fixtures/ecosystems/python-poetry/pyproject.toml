@@ -1,0 +1,11 @@
+[tool.poetry]
+name = "demo-poetry"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+requests = "^2.31.0"
+flask = { version = "==3.0.0", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"

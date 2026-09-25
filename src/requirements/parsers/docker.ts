@@ -1,11 +1,12 @@
 import type { ProjectRequirement, ParsedRequirements, RequirementParseError, RequirementParser } from '../../core/interfaces.js';
+import { formatMatchesAny } from '../projects.js';
 
 export class DockerfileRequirementParser implements RequirementParser {
   readonly ecosystem = 'docker';
   readonly supportedFormats = ['Dockerfile', 'dockerfile', 'Containerfile', 'containerfile'];
 
   canParse(fileName: string): boolean {
-    return this.supportedFormats.includes(fileName.toLowerCase());
+    return formatMatchesAny(this.supportedFormats, fileName);
   }
 
   parse(sourceFile: string, content: string): ParsedRequirements {
@@ -49,10 +50,34 @@ export class DockerfileRequirementParser implements RequirementParser {
         if (instruction === 'FROM') {
           const fromArgs = args;
           const parts = fromArgs.split(/\s+/);
-          const imageSpec = parts[0] || '';
-          const imageParts = imageSpec.split(':');
-          const imageName = imageParts[0] || '';
-          const tag = imageParts[1] || 'latest';
+          let platform: string | undefined;
+          let imageSpec = '';
+          for (let k = 0; k < parts.length; k++) {
+            const part = parts[k] ?? '';
+            const platformEquals = part.match(/^--platform=(.+)$/);
+            if (platformEquals && platformEquals[1]) {
+              platform = platformEquals[1];
+              continue;
+            }
+            if (part === '--platform' && k + 1 < parts.length) {
+              platform = parts[k + 1];
+              k += 1;
+              continue;
+            }
+            if (part.startsWith('--')) {
+              continue;
+            }
+            if (!imageSpec) {
+              imageSpec = part;
+            }
+          }
+          const digestSplit = imageSpec.split('@');
+          const nameTag = digestSplit[0] ?? '';
+          const digest = digestSplit.length > 1 ? digestSplit.slice(1).join('@') : undefined;
+          const lastSlash = nameTag.lastIndexOf('/');
+          const lastColon = nameTag.lastIndexOf(':');
+          const imageName = lastColon > lastSlash ? nameTag.slice(0, lastColon) : nameTag;
+          const tag = lastColon > lastSlash ? nameTag.slice(lastColon + 1) : 'latest';
 
           if (imageName) {
             requirements.push({
@@ -60,11 +85,32 @@ export class DockerfileRequirementParser implements RequirementParser {
               ecosystem: 'docker',
               type: 'container-image',
               name: imageName,
-              versionConstraint: tag,
+              versionConstraint: digest ? `${tag}@${digest}` : tag,
               rawConstraint: imageSpec,
               sourceFile,
               sourceSection: `FROM`,
-              metadata: { type: 'base-image' },
+              metadata: {
+                type: 'base-image',
+                ...(digest ? { digest, pinned: true } : {}),
+                ...(platform ? { platform } : {}),
+              },
+            });
+          }
+        }
+
+        if (instruction === 'ARG' && !args.includes(' ')) {
+          const argMatch = args.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:=(.+))?$/);
+          if (argMatch && argMatch[1]) {
+            requirements.push({
+              id: `req-${Date.now()}-arg-${argMatch[1]}`,
+              ecosystem: 'docker',
+              type: 'custom',
+              name: `build arg ${argMatch[1]}`,
+              versionConstraint: argMatch[2]?.trim() || undefined,
+              rawConstraint: args,
+              sourceFile,
+              sourceSection: 'ARG',
+              metadata: { type: 'build-arg', arg: argMatch[1] },
             });
           }
         }
@@ -102,31 +148,52 @@ export class DockerComposeRequirementParser implements RequirementParser {
 
     try {
       const lines = content.split('\n');
-      let inServices = false;
+      let servicesIndent = -1;
       let currentService = '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
+      const indentOf = (rawLine: string): number => {
+        const match = rawLine.match(/^(\s*)\S/);
+        return match && match[1] !== undefined ? match[1].length : -1;
+      };
+
+      for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
 
-        if (trimmed === 'services:') {
-          inServices = true;
+        if (trimmed === 'services:' && indentOf(rawLine) === 0) {
+          servicesIndent = 0;
+          currentService = '';
           continue;
         }
 
-        if (inServices && trimmed.endsWith(':') && !trimmed.startsWith(' ')) {
+        if (servicesIndent === -1) {
+          continue;
+        }
+
+        const indent = indentOf(rawLine);
+        if (indent <= servicesIndent && trimmed.length > 0) {
+          servicesIndent = -1;
+          currentService = '';
+          continue;
+        }
+
+        if (trimmed.endsWith(':') && indent === servicesIndent + 2) {
           currentService = trimmed.slice(0, -1);
           continue;
         }
 
-        if (currentService && inServices) {
+        if (currentService && indent > servicesIndent + 2) {
           if (trimmed.startsWith('image:')) {
             const imageMatch = trimmed.match(/image:\s*(.+)/);
             if (imageMatch && imageMatch[1]) {
               const imageSpec = imageMatch[1].trim().replace(/^["']|["']$/g, '');
-              const parts = imageSpec.split(':');
-              const imageName = parts[0] || '';
-              const tag = parts[1] || 'latest';
+              const digestSplit = imageSpec.split('@');
+              const nameTag = digestSplit[0] ?? '';
+              const digest = digestSplit.length > 1 ? digestSplit.slice(1).join('@') : undefined;
+              const lastSlash = nameTag.lastIndexOf('/');
+              const lastColon = nameTag.lastIndexOf(':');
+              const imageName = lastColon > lastSlash ? nameTag.slice(0, lastColon) : nameTag;
+              const tag = lastColon > lastSlash ? nameTag.slice(lastColon + 1) : 'latest';
 
               if (imageName) {
                 requirements.push({
@@ -134,25 +201,44 @@ export class DockerComposeRequirementParser implements RequirementParser {
                   ecosystem: 'docker',
                   type: 'container-image',
                   name: imageName,
-                  versionConstraint: tag,
+                  versionConstraint: digest ? `${tag}@${digest}` : tag,
                   rawConstraint: imageSpec,
                   sourceFile,
                   sourceSection: `services.${currentService}.image`,
-                  metadata: { service: currentService, type: 'image' },
+                  metadata: {
+                    service: currentService,
+                    type: 'image',
+                    ...(digest ? { digest, pinned: true } : {}),
+                  },
                 });
               }
             }
           } else if (trimmed.startsWith('build:')) {
-            requirements.push({
-              id: `req-${Date.now()}-${currentService}-build`,
-              ecosystem: 'docker',
-              type: 'container-image',
-              name: 'build',
-              rawConstraint: trimmed,
-              sourceFile,
-              sourceSection: `services.${currentService}.build`,
-              metadata: { service: currentService, type: 'build' },
-            });
+            const buildValue = trimmed.slice('build:'.length).trim();
+            if (buildValue) {
+              requirements.push({
+                id: `req-${Date.now()}-${currentService}-build`,
+                ecosystem: 'docker',
+                type: 'container-image',
+                name: 'build',
+                versionConstraint: buildValue.replace(/^["']|["']$/g, ''),
+                rawConstraint: buildValue,
+                sourceFile,
+                sourceSection: `services.${currentService}.build`,
+                metadata: { service: currentService, type: 'build' },
+              });
+            } else {
+              requirements.push({
+                id: `req-${Date.now()}-${currentService}-build`,
+                ecosystem: 'docker',
+                type: 'container-image',
+                name: 'build',
+                rawConstraint: trimmed,
+                sourceFile,
+                sourceSection: `services.${currentService}.build`,
+                metadata: { service: currentService, type: 'build' },
+              });
+            }
           } else if (trimmed.startsWith('dockerfile:')) {
             const dockerfileMatch = trimmed.match(/dockerfile:\s*(.+)/);
             if (dockerfileMatch && dockerfileMatch[1]) {

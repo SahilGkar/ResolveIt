@@ -1,11 +1,12 @@
 import type { ProjectRequirement, ParsedRequirements, RequirementParseError, RequirementParser } from '../../core/interfaces.js';
+import { formatMatchesAny } from '../projects.js';
 
 export class MakefileRequirementParser implements RequirementParser {
   readonly ecosystem = 'make';
   readonly supportedFormats = ['Makefile', 'makefile', 'GNUmakefile'];
 
   canParse(fileName: string): boolean {
-    return this.supportedFormats.some(fmt => fileName.toLowerCase().includes(fmt.toLowerCase()));
+    return formatMatchesAny(this.supportedFormats, fileName);
   }
 
   parse(sourceFile: string, content: string): ParsedRequirements {

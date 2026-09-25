@@ -17,7 +17,8 @@ import {
   containerDiagnosticRule, 
   dependencyDiagnosticRule, 
   buildDiagnosticRule, 
-  projectDiagnosticRule 
+  projectDiagnosticRule,
+  crossProjectDiagnosticRule
 } from './rules/index.js';
 
 const SEVERITY_ORDER: Record<DiagnosticSeverity, number> = {
@@ -76,6 +77,7 @@ export class DiagnosticEngineImpl implements DiagnosticEngine {
     this.registerRule(dependencyDiagnosticRule);
     this.registerRule(buildDiagnosticRule);
     this.registerRule(projectDiagnosticRule);
+    this.registerRule(crossProjectDiagnosticRule);
   }
   
   registerRule(rule: DiagnosticRule): void {

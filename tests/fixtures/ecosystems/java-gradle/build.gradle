@@ -1,0 +1,16 @@
+plugins {
+    id 'java'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+dependencies {
+    implementation 'com.google.guava:guava:32.1.2-jre'
+    implementation('org.apache.commons:commons-lang3:3.14.0')
+    testImplementation 'junit:junit:4.13.2'
+    compileOnly 'org.projectlombok:lombok:latest.release'
+}

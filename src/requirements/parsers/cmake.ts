@@ -1,11 +1,12 @@
 import type { ProjectRequirement, ParsedRequirements, RequirementParseError, RequirementParser } from '../../core/interfaces.js';
+import { formatMatchesAny } from '../projects.js';
 
 export class CMakeRequirementParser implements RequirementParser {
   readonly ecosystem = 'cpp';
   readonly supportedFormats = ['CMakeLists.txt'];
 
   canParse(fileName: string): boolean {
-    return this.supportedFormats.includes(fileName.toLowerCase());
+    return formatMatchesAny(this.supportedFormats, fileName);
   }
 
   parse(sourceFile: string, content: string): ParsedRequirements {
@@ -30,6 +31,7 @@ export class CMakeRequirementParser implements RequirementParser {
 
       const projectMatch = content.match(/project\s*\(\s*([^)\s]+)(?:\s+VERSION\s+([^)\s]+))?/i);
       if (projectMatch && projectMatch[2]) {
+        const languagesMatch = content.match(/project\s*\([^)]*\bLANGUAGES\b\s+([^)]+)/i);
         requirements.push({
           id: `req-${Date.now()}-project-version`,
           ecosystem: 'cpp',
@@ -39,7 +41,10 @@ export class CMakeRequirementParser implements RequirementParser {
           rawConstraint: projectMatch[2].trim(),
           sourceFile,
           sourceSection: 'project()',
-          metadata: { type: 'project-version' },
+          metadata: {
+            type: 'project-version',
+            ...(languagesMatch && languagesMatch[1] ? { languages: languagesMatch[1].trim().split(/\s+/) } : {}),
+          },
         });
       }
 
@@ -73,12 +78,18 @@ export class CMakeRequirementParser implements RequirementParser {
         });
       }
 
-      const findPackageRegex = /find_package\s*\(\s*([^)\s]+)(?:\s+([^)\s]+))?/gi;
+      const findPackageRegex = /find_package\s*\(\s*([^)\s]+)(?:\s+([^)\s]+))?([^)]*)\)?/gi;
       let match;
       while ((match = findPackageRegex.exec(content)) !== null) {
         if (match[1]) {
           const packageName = match[1].trim();
-          const version = match[2] ? match[2].trim() : undefined;
+          const rawSecond = match[2] ? match[2].trim() : undefined;
+          const version = rawSecond && /^[0-9]/.test(rawSecond) ? rawSecond : undefined;
+          const rest = match[3] ?? '';
+          const componentsMatch = rest.match(/COMPONENTS\s+([^)]+)/i);
+          const components = componentsMatch && componentsMatch[1]
+            ? componentsMatch[1].trim().split(/\s+/).filter((part) => !/^(REQUIRED|OPTIONAL)$/i.test(part))
+            : [];
 
           requirements.push({
             id: `req-${Date.now()}-${packageName}`,
@@ -86,10 +97,14 @@ export class CMakeRequirementParser implements RequirementParser {
             type: 'package-dependency',
             name: packageName,
             versionConstraint: version,
-            rawConstraint: version,
+            rawConstraint: rawSecond,
             sourceFile,
             sourceSection: 'find_package',
-            metadata: { type: 'package', buildSystem: 'cmake' },
+            metadata: {
+              type: 'package',
+              buildSystem: 'cmake',
+              ...(components.length > 0 ? { components } : {}),
+            },
           });
         }
       }

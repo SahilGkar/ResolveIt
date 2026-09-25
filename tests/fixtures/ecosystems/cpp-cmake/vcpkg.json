@@ -1,0 +1,12 @@
+{
+  "name": "demo",
+  "version": "1.2.0",
+  "builtin-baseline": "a34c873a2d2ce8f1d27d2f1a5a1f8a6b9c0d1e",
+  "dependencies": [
+    "fmt",
+    {
+      "name": "spdlog",
+      "version>=": "1.13.0"
+    }
+  ]
+}

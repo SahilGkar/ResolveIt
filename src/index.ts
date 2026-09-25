@@ -177,6 +177,7 @@ export {
   dependencyDiagnosticRule,
   buildDiagnosticRule,
   projectDiagnosticRule,
+  crossProjectDiagnosticRule,
   type DiagnoseOptions,
 } from './diagnostics/index.js';
 

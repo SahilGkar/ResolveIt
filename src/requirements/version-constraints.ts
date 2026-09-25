@@ -15,8 +15,22 @@ const OPERATOR_PATTERNS: ReadonlyArray<{ operator: VersionOperator; pattern: Reg
   { operator: '*', pattern: /^\*\s*(.+)$/ },
 ];
 
+export function stripVersionPrefix(version: string): string {
+  let cleaned = version.trim();
+  if (/^[vV]\d/.test(cleaned)) {
+    cleaned = cleaned.slice(1);
+  }
+  if (cleaned.startsWith('=') && !cleaned.startsWith('==')) {
+    cleaned = cleaned.slice(1).trim();
+  }
+  if (cleaned.startsWith('===')) {
+    cleaned = `==${cleaned.slice(3).trim()}`;
+  }
+  return cleaned;
+}
+
 export function parseVersionConstraint(constraint: string): VersionConstraint | null {
-  const trimmed = constraint.trim();
+  const trimmed = stripVersionPrefix(constraint.trim());
   
   if (!trimmed || trimmed === '*') {
     return { operator: 'none', version: '*', raw: trimmed };

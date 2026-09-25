@@ -14,6 +14,12 @@ interface PackageJson {
     pnpm?: string;
   };
   packageManager?: string;
+  volta?: {
+    node?: string;
+    npm?: string;
+    yarn?: string;
+    pnpm?: string;
+  };
   workspaces?: string[] | { packages: string[] };
 }
 
@@ -101,6 +107,37 @@ export class NodeRequirementParser implements RequirementParser {
           sourceSection: 'packageManager',
           metadata: { type: 'package-manager', config: 'packageManager' },
         });
+      }
+
+      if (pkg.volta?.node) {
+        requirements.push({
+          id: `req-${Date.now()}-volta-node`,
+          ecosystem: 'node',
+          type: 'runtime-version',
+          name: 'node',
+          versionConstraint: `==${pkg.volta.node}`,
+          rawConstraint: pkg.volta.node,
+          sourceFile,
+          sourceSection: 'volta.node',
+          metadata: { type: 'runtime', config: 'volta' },
+        });
+      }
+
+      for (const manager of ['npm', 'yarn', 'pnpm'] as const) {
+        const pinned = pkg.volta?.[manager];
+        if (pinned) {
+          requirements.push({
+            id: `req-${Date.now()}-volta-${manager}`,
+            ecosystem: 'node',
+            type: 'package-manager',
+            name: manager,
+            versionConstraint: `==${pinned}`,
+            rawConstraint: pinned,
+            sourceFile,
+            sourceSection: `volta.${manager}`,
+            metadata: { type: 'package-manager', config: 'volta' },
+          });
+        }
       }
 
       // Parse dependencies
