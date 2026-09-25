@@ -66,6 +66,9 @@ interface TestState {
   config: Record<string, unknown>;
   workspaceFolders: Array<{ name: string; uri: Uri; index: number }>;
   statusBarItems: StatusBarItemStub[];
+  workspaceFolderListeners: Array<() => void>;
+  configChangeListeners: Array<(event: { affectsConfiguration(section: string): boolean }) => void>;
+  progressTokens: Array<{ cancel(): void }>;
 }
 
 class StatusBarItemStub {
@@ -95,6 +98,9 @@ export const __testState: TestState = {
   config: {},
   workspaceFolders: [],
   statusBarItems: [],
+  workspaceFolderListeners: [],
+  configChangeListeners: [],
+  progressTokens: [],
 };
 
 export function __reset(): void {
@@ -108,6 +114,9 @@ export function __reset(): void {
   __testState.config = {};
   __testState.workspaceFolders = [];
   __testState.statusBarItems = [];
+  __testState.workspaceFolderListeners = [];
+  __testState.configChangeListeners = [];
+  __testState.progressTokens = [];
 }
 
 export const commands = {
@@ -139,9 +148,27 @@ export const window = {
   },
   withProgress(
     _options: unknown,
-    task: (progress: { report(value: { message: string }): void }) => Promise<unknown>
+    task: (
+      progress: { report(value: { message: string }): void },
+      token: { isCancellationRequested: boolean; onCancellationRequested(callback: () => void): void }
+    ) => Promise<unknown>
   ): Promise<unknown> {
-    return task({ report: (value) => __testState.progressReports.push(value.message) });
+    const listeners: Array<() => void> = [];
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: (callback: () => void): void => {
+        listeners.push(callback);
+      },
+    };
+    __testState.progressTokens.push({
+      cancel: () => {
+        (token as { isCancellationRequested: boolean }).isCancellationRequested = true;
+        for (const listener of listeners) {
+          listener();
+        }
+      },
+    });
+    return task({ report: (value) => __testState.progressReports.push(value.message) }, token);
   },
   registerTreeDataProvider(viewId: string, _provider: unknown): { dispose(): void } {
     __testState.registeredViews.push(viewId);
@@ -178,5 +205,15 @@ export const workspace = {
   },
   openTextDocument(path: string): Promise<{ uri: Uri }> {
     return Promise.resolve({ uri: Uri.file(path) });
+  },
+  onDidChangeWorkspaceFolders(listener: () => void): { dispose(): void } {
+    __testState.workspaceFolderListeners.push(listener);
+    return { dispose: () => undefined };
+  },
+  onDidChangeConfiguration(
+    listener: (event: { affectsConfiguration(section: string): boolean }) => void
+  ): { dispose(): void } {
+    __testState.configChangeListeners.push(listener);
+    return { dispose: () => undefined };
   },
 };

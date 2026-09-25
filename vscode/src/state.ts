@@ -36,9 +36,30 @@ export class ExtensionState {
   private lastVerification?: LastVerification;
   private events: AgentEvent[] = [];
   private revision = 0;
+  private workspaceRoot?: string;
 
   getRevision(): number {
     return this.revision;
+  }
+
+  getWorkspaceRoot(): string | undefined {
+    return this.workspaceRoot;
+  }
+
+  bindWorkspace(root: string | undefined): boolean {
+    if (this.workspaceRoot === root) {
+      return false;
+    }
+    this.workspaceRoot = root;
+    this.diagnostics = [];
+    this.environmentInfo = undefined;
+    this.requirements = [];
+    this.projectName = undefined;
+    this.lastRun = undefined;
+    this.lastVerification = undefined;
+    this.events = [];
+    this.revision += 1;
+    return true;
   }
 
   setDiagnostics(diagnostics: ReadonlyArray<Diagnostic>): void {

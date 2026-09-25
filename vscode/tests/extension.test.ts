@@ -36,7 +36,9 @@ describe('extension activation', () => {
       'resolveit.environment',
       'resolveit.requirements',
     ]);
-    expect(context.subscriptions).toHaveLength(12);
+    expect(context.subscriptions).toHaveLength(14);
+    expect(__testState.workspaceFolderListeners).toHaveLength(1);
+    expect(__testState.configChangeListeners).toHaveLength(1);
     expect(__testState.statusBarItems).toHaveLength(1);
     expect(__testState.statusBarItems[0]?.shown).toBe(true);
   });

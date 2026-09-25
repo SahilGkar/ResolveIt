@@ -124,6 +124,7 @@
     "test": "vitest run",
     "pretest": "npm run build",
     "lint": "eslint src",
+    "validate-package": "node scripts/validate-package.mjs",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

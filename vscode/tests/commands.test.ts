@@ -7,6 +7,8 @@ import { __reset } from './vscode-mock.js';
 import { CoreClient } from '../src/core.js';
 import { ExtensionState } from '../src/state.js';
 import { Logger } from '../src/ui/output.js';
+import { OperationCoordinator } from '../src/operations.js';
+import { WorkspaceService } from '../src/workspace.js';
 import { createCommandHandlers } from '../src/commands.js';
 import type { CommandContext } from '../src/commands.js';
 import type { ApprovalDialogs } from '../src/ui/approval.js';
@@ -109,9 +111,17 @@ function fakeContext(core: CoreClient, folders: FolderLike[], answers: boolean[]
       return Promise.resolve(queue.shift() ?? false);
     },
   };
+  const state = new ExtensionState();
+  const workspaces = new WorkspaceService({
+    getFolders: () => folders,
+    notifyMultiRoot: (roots) => recorded.messages.push({ kind: 'warn', message: `multi-root: ${roots.join(',')}` }),
+    onWorkspaceChanged: (root) => {
+      state.bindWorkspace(root);
+    },
+  });
   const ctx: CommandContext = {
     core,
-    state: new ExtensionState(),
+    state,
     logger: new Logger({ appendLine: () => undefined, show: () => undefined }),
     messages: {
       info: (message) => recorded.messages.push({ kind: 'info', message }),
@@ -124,6 +134,8 @@ function fakeContext(core: CoreClient, folders: FolderLike[], answers: boolean[]
       showOk: (tooltip) => recorded.status.push(`ok:${tooltip}`),
     },
     dialogs,
+    coordinator: new OperationCoordinator(),
+    workspaces,
     refreshViews: () => {
       recorded.refreshes += 1;
     },
@@ -131,6 +143,13 @@ function fakeContext(core: CoreClient, folders: FolderLike[], answers: boolean[]
     reportProgress: (title, task) => {
       recorded.titles.push(title);
       return task(() => undefined);
+    },
+    reportCancellable: (title, task) => {
+      recorded.titles.push(title);
+      return task(
+        () => undefined,
+        { isCancellationRequested: false, onCancellationRequested: () => undefined }
+      );
     },
     getAIConfig: () => ({ provider: 'none' }),
     getMaxIterations: () => 3,
@@ -162,7 +181,7 @@ describe('command handlers', () => {
     await createCommandHandlers(ctx)['resolveit.scan']?.();
     expect(calls).toEqual(['scan:/tmp/ws']);
     expect(ctx.state.getProjectName()).toBe('(no projects)');
-    expect(recorded.refreshes).toBe(1);
+    expect(recorded.refreshes).toBe(2);
   });
 
   it('should diagnose and update the status', async () => {
@@ -247,6 +266,6 @@ describe('command handlers', () => {
     await handlers['resolveit.environment']?.();
     await handlers['resolveit.requirements']?.();
     expect(ctx.state.getEnvironment()).toBeDefined();
-    expect(recorded.refreshes).toBe(2);
+    expect(recorded.refreshes).toBe(3);
   });
 });

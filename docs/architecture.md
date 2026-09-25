@@ -254,6 +254,46 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 9 Status (Implemented): Extension ↔ Core Integration Hardening
+
+The extension stays a thin client; Phase 9 hardens the orchestration boundary
+without adding features or services:
+
+```text
+VS Code UI
+    ↓  commands, views, dialogs, progress, status bar
+Extension orchestration/state (`vscode/src`)
+  workspace service, operation coordinator, run scopes, error taxonomy
+    ↓  public Core API only (`src/index.ts`)
+Core engine/safety/agent (authoritative for logic and security decisions)
+```
+
+- **Workspace lifecycle** (`vscode/src/workspace.ts`, `state.bindWorkspace`):
+  centralized deterministic resolution (first folder wins), one-time multi-root
+  notice per change, state stamped to and cleared on workspace switches/close,
+  per-operation freshness guards discard results for roots that are no longer
+  active. Folder-change and configuration-change listeners refresh state, views,
+  status, and AI status.
+- **Concurrency/cancellation** (`vscode/src/operations.ts`): per-workspace locks
+  reject duplicate invocations with friendly messages (`run`/`repair` mutually
+  exclusive); cooperative cancellation detaches the UI, reports cancellation
+  (never success), discards late results, and always cleans up. Core operations
+  are not abortable — documented, not faked.
+- **Events** (`vscode/src/ui/events.ts`): per-run `RunEventScope` closes in
+  `finally`; late/stale events from finished or superseded runs are ignored, so
+  completed runs cannot update the UI and the status bar tracks the latest run.
+- **Errors** (`vscode/src/errors.ts`): classified kinds (no/invalid workspace,
+  config, AI unavailable, permission, repair/verification failure, busy,
+  cancelled, unexpected) with actionable user messages and redacted channel logs.
+- **Repair/verify reporting**: the UI separates Approved → Executed → Succeeded →
+  Verified from Core results; verification failures warn instead of resolving.
+- **Packaging**: `.vscodeignore` ships only manifest, bundle, and readme;
+  `scripts/validate-package.mjs` checks command/view/config/activation parity,
+  bundle freshness, and hygiene (`npm run validate-package`).
+- **Tests**: `vscode/tests/integration.test.ts` covers lifecycle, concurrency,
+  scopes, error taxonomy, repair stages, config/secrets, packaging parity, and a
+  temporary-fixture diagnose→deny→verify flow. No VS Code instance required.
+
 ## Phase 8 Status (Implemented): VS Code Extension
 
 The extension (`vscode/`) is a thin client over ResolveIt Core:

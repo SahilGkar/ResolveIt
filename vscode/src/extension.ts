@@ -3,8 +3,9 @@ import { resolveAIConfig } from '../../src/index.js';
 import type { AIConfig } from '../../src/index.js';
 import { CoreClient } from './core.js';
 import { createCommandHandlers } from './commands.js';
-import type { CommandContext } from './commands.js';
-import { configToAIConfigOverrides, friendlyError } from './mappers.js';
+import type { CancellationTokenLike, CommandContext } from './commands.js';
+import { configToAIConfigOverrides, friendlyError, multiRootNotice } from './mappers.js';
+import { OperationCoordinator } from './operations.js';
 import { ExtensionState } from './state.js';
 import { vscodeApprovalDialogs } from './ui/approval.js';
 import { Logger } from './ui/output.js';
@@ -13,6 +14,7 @@ import { DiagnosticsTreeProvider } from './views/diagnosticsTree.js';
 import { EnvironmentTreeProvider } from './views/environmentTree.js';
 import { ProjectTreeProvider } from './views/projectTree.js';
 import { RequirementsTreeProvider } from './views/requirementsTree.js';
+import { WorkspaceService } from './workspace.js';
 
 export const COMMAND_IDS = [
   'resolveit.scan',
@@ -22,6 +24,13 @@ export const COMMAND_IDS = [
   'resolveit.requirements',
   'resolveit.repair',
   'resolveit.verify',
+] as const;
+
+export const VIEW_IDS = [
+  'resolveit.project',
+  'resolveit.diagnostics',
+  'resolveit.environment',
+  'resolveit.requirements',
 ] as const;
 
 function readAIConfig(): AIConfig {
@@ -74,6 +83,20 @@ export function activate(context: vscode.ExtensionContext): void {
     requirementsTree.refresh();
   };
 
+  const coordinator = new OperationCoordinator();
+  const workspaces = new WorkspaceService({
+    getFolders: () => vscode.workspace.workspaceFolders ?? [],
+    notifyMultiRoot: (roots) => {
+      void vscode.window.showWarningMessage(multiRootNotice(roots));
+    },
+    onWorkspaceChanged: (root) => {
+      state.bindWorkspace(root);
+      showOk(statusItem, root ? `ResolveIt: watching ${root}` : 'ResolveIt: no workspace open');
+      refreshViews();
+      logger.info(root ? `Workspace changed; now watching ${root}. Previous state cleared.` : 'Workspace closed; state cleared.');
+    },
+  });
+
   const statusControls = {
     showBusy: (activity: string, tooltip: string): void => {
       statusItem.text = `$(sync~spin) ResolveIt: ${activity}`;
@@ -109,6 +132,8 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     status: statusControls,
     dialogs: vscodeApprovalDialogs(),
+    coordinator,
+    workspaces,
     refreshViews,
     getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
     reportProgress: <T,>(title: string, task: (report: (message: string) => void) => Promise<T>): Promise<T> => {
@@ -116,6 +141,17 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title, cancellable: false },
           async (progress) => task((message: string) => progress.report({ message }))
+        )
+      );
+    },
+    reportCancellable: <T,>(
+      title: string,
+      task: (report: (message: string) => void, token: CancellationTokenLike) => Promise<T>
+    ): Promise<T> => {
+      return Promise.resolve(
+        vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+          async (progress, token) => task((message: string) => progress.report({ message }), token)
         )
       );
     },
@@ -134,10 +170,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const handlers = createCommandHandlers(commandContext);
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('resolveit.project', projectTree),
-    vscode.window.registerTreeDataProvider('resolveit.diagnostics', diagnosticsTree),
-    vscode.window.registerTreeDataProvider('resolveit.environment', environmentTree),
-    vscode.window.registerTreeDataProvider('resolveit.requirements', requirementsTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[0], projectTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[1], diagnosticsTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[2], environmentTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[3], requirementsTree),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      workspaces.sync();
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('resolveit')) {
+        logger.info('ResolveIt configuration changed; refreshing AI status.');
+        void refreshAIStatus();
+      }
+    }),
     statusItem
   );
 
@@ -148,16 +193,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  void core
-    .aiStatus(readAIConfig())
-    .then((status) => {
-      state.setAIStatus({ provider: status.provider, model: status.model, baseUrl: status.baseUrl, available: status.available });
-      refreshViews();
-      logger.info(`AI provider: ${status.provider} (${status.available ? 'available' : 'unavailable'}).`);
-    })
-    .catch((error: unknown) => {
-      logger.error(friendlyError('Could not determine AI provider status', error));
-    });
+  function refreshAIStatus(): Promise<void> {
+    return core
+      .aiStatus(readAIConfig())
+      .then((status) => {
+        state.setAIStatus({ provider: status.provider, model: status.model, baseUrl: status.baseUrl, available: status.available });
+        refreshViews();
+        logger.info(`AI provider: ${status.provider} (${status.available ? 'available' : 'unavailable'}).`);
+      })
+      .catch((error: unknown) => {
+        logger.error(friendlyError('Could not determine AI provider status', error));
+      });
+  }
+
+  void refreshAIStatus();
 }
 
 export function deactivate(): void {}

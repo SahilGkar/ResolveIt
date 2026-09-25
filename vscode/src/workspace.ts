@@ -29,3 +29,56 @@ export function primaryRoot(resolution: WorkspaceResolution): string | undefined
   }
   return undefined;
 }
+
+export function workspaceSignature(folders: ReadonlyArray<FolderLike> | undefined): string {
+  if (!folders || folders.length === 0) {
+    return 'none';
+  }
+  return folders.map((folder) => folder.uri.fsPath).sort().join('|');
+}
+
+export interface WorkspaceServiceOptions {
+  readonly getFolders: () => ReadonlyArray<FolderLike> | undefined;
+  readonly notifyMultiRoot: (roots: ReadonlyArray<string>) => void;
+  readonly onWorkspaceChanged?: (root: string | undefined) => void;
+}
+
+export class WorkspaceService {
+  private lastSignature?: string;
+
+  constructor(private readonly options: WorkspaceServiceOptions) {}
+
+  current(): WorkspaceResolution {
+    return resolveWorkspace(this.options.getFolders());
+  }
+
+  activeRoot(): string | undefined {
+    return primaryRoot(this.current());
+  }
+
+  signature(): string {
+    return workspaceSignature(this.options.getFolders());
+  }
+
+  sync(): { changed: boolean; root: string | undefined } {
+    const signature = this.signature();
+    const changed = this.lastSignature !== undefined && this.lastSignature !== signature;
+    const first = this.lastSignature === undefined;
+    this.lastSignature = signature;
+    const resolution = this.current();
+    if (resolution.kind === 'multi') {
+      if (changed || first) {
+        this.options.notifyMultiRoot(resolution.roots);
+      }
+    }
+    const root = primaryRoot(resolution);
+    if (changed) {
+      this.options.onWorkspaceChanged?.(root);
+    }
+    return { changed: changed || first, root };
+  }
+
+  isCurrent(root: string): boolean {
+    return this.activeRoot() === root;
+  }
+}
