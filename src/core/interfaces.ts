@@ -60,6 +60,17 @@ import type {
   RootCause,
   RollbackAction,
   RepairExecutionResult,
+  AIProposedAction,
+  AIPlanningResult,
+  AIPlanningContext,
+  AIWorkspaceSummary,
+  AIEnvironmentSummary,
+  AIRequirementSummary,
+  AIDiagnosticSummary,
+  AIToolDescriptor,
+  AIPlanningConstraints,
+  AIPreviousAttempt,
+  AIVerificationSummary,
 } from './models.js';
 
 export type {
@@ -124,6 +135,17 @@ export type {
   RootCause,
   RollbackAction,
   RepairExecutionResult,
+  AIProposedAction,
+  AIPlanningResult,
+  AIPlanningContext,
+  AIWorkspaceSummary,
+  AIEnvironmentSummary,
+  AIRequirementSummary,
+  AIDiagnosticSummary,
+  AIToolDescriptor,
+  AIPlanningConstraints,
+  AIPreviousAttempt,
+  AIVerificationSummary,
 };
 
 export interface WorkspaceManager {
@@ -247,10 +269,14 @@ export interface AIProvider {
   readonly type: 'none' | 'local' | 'external';
   readonly name: string;
   readonly version: string;
-  
+
   isAvailable(): Promise<boolean>;
   diagnose(evidence: AgentEvidence): Promise<DiagnosisResult>;
   planRepair(diagnosis: DiagnosisResult, context: PlanContext): Promise<RepairPlan>;
+
+  // Phase 7: structured AI planning. Optional so existing providers keep working;
+  // the agent uses deterministic planning whenever this is absent.
+  generatePlan?(context: AIPlanningContext): Promise<AIPlanningResult>;
 }
 
 export interface Agent {

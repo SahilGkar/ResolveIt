@@ -254,6 +254,87 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 7 Status (Implemented): AI Provider Abstraction
+
+> AI is optional. ResolveIt's deterministic core works without AI.
+
+### Provider abstraction (`src/ai/`)
+
+The Phase 0 `AIProvider` contract (`type`, `name`, `version`, `isAvailable`,
+`diagnose`, `planRepair`) is preserved and extended with an optional
+`generatePlan(context: AIPlanningContext): Promise<AIPlanningResult>` capability —
+existing providers keep working without implementing it. Provider types remain
+`none | local | external` (`AI_PROVIDER_TYPES`); the legacy `createAIProvider`
+factory is unchanged, and `createAIProviderFromConfig` builds Phase 7 providers.
+
+- **No AI** (`NoAIProvider`, `src/ai/providers.ts`) — no `generatePlan`, no network
+  calls. The agent treats it as deterministic-only and logs an explicit fallback.
+- **Local AI** (`LocalAIProvider`, `src/ai/providers/local.ts`) — Ollama-compatible
+  `POST {baseUrl}/api/chat` (`stream: false`, `format: 'json'`), availability via
+  `GET {baseUrl}/api/tags`. No model is hard-coded or downloaded; missing model
+  configuration fails cleanly with `not-configured`.
+- **External AI** (`ExternalAIProvider`, `src/ai/providers/external.ts`) —
+  OpenAI-compatible `POST {baseUrl}/chat/completions` (`temperature: 0`,
+  `response_format: json_object`), availability via `GET {baseUrl}/models`. No
+  vendor is hard-coded; no API key is required to run the project.
+
+HTTP uses the Node.js built-in `fetch` with `AbortController` timeouts
+(`src/ai/http.ts`); the fetch implementation is injectable so tests never touch the
+network. No vendor SDK dependencies were added.
+
+### Provider configuration (`src/ai/config.ts`)
+
+`AIConfig` (`provider`, `model`, `baseUrl`, `apiKey`, `timeoutMs`) resolves with
+deterministic precedence: explicit/CLI overrides → `RESOLVEIT_AI_PROVIDER`,
+`RESOLVEIT_AI_MODEL`, `RESOLVEIT_AI_BASE_URL`, `RESOLVEIT_AI_API_KEY`,
+`RESOLVEIT_AI_TIMEOUT_MS` → safe defaults (`none`, 30s timeout,
+`http://localhost:11434` for local). Unknown provider values coerce to `none`.
+`sanitizeAIConfig` exposes only `apiKeyConfigured: boolean` — keys never appear in
+status output, logs, or events.
+
+### AI context boundary (`src/ai/context.ts`)
+
+`buildAIPlanningContext` sends summaries only: workspace/project counts and names,
+runtime/tool names and versions, requirement descriptors, blocking diagnostics with
+expected/actual evidence, the tool allowlist, permission constraints, previous
+attempt fingerprints, and the last verification summary. Environment variable values,
+file contents, and `.env` data are never included.
+
+### Structured output and validation
+
+`buildPlanningPrompt` (`src/ai/prompt.ts`) states the safety boundary explicitly
+("You are proposing actions. You are not executing actions. You cannot grant
+yourself permission. Only registered ResolveIt RepairTools may execute actions.").
+`parseAIPlanningResponse` (`src/ai/response.ts`) accepts JSON or fenced JSON and
+schema-validates shape only. `validateAIPlan` (`src/ai/validation.ts`) enforces the
+execution boundary:
+
+```text
+AI output → parse → schema → tool existence → parameter allowlist →
+privilege/command-field rejection → RepairAction (tool-owned permission) →
+tool.validate() → PermissionManager
+```
+
+Unknown tools, stray parameters, path traversal, bad package names, arbitrary
+`command`/`shell`/`exec` fields, and `permissionLevel`/`approval` keys (escalation
+attempts) are rejected. AI-supplied `workspaceRoot` values are overwritten with the
+run root. The AI can never assign permission levels.
+
+### Failure behavior and agent integration (`src/agent/ai-planner.ts`)
+
+`createAIPlanner` adapts any `AIProvider` to the Phase 6 `PlannerFn`: unavailable,
+timed-out, malformed, refused, rate-limited, or fully-rejected AI output falls back
+to `DeterministicRepairPlanner` with an explicit logged reason; partial valid output
+uses the valid subset (rejections recorded on the plan). Re-planning passes the new
+verification summary and previous attempts to the model; Phase 6 fingerprint loop
+prevention remains authoritative. AI never controls state transitions.
+
+### Security boundaries
+
+API keys travel only in the outbound `Authorization` header, never in prompts,
+contexts, events, audit records, diagnostics, or error messages. The exposed tool
+surface is name/description/allowed-parameters/permission-level only.
+
 ## Phase 6 Status (Implemented): Verification & Agent Loop
 
 ### Lifecycle

@@ -6,8 +6,10 @@ import { scanRequirements, reqInfoToJSON, formatRequirementsSummary } from '../r
 import { diagnose, formatDiagnosticsSummary, diagnosticsToJSON } from '../diagnostics/index.js';
 import type { RepairExecutionOptions } from '../repair/index.js';
 import { createRepairExecutor, createRepairPlanner } from '../repair/index.js';
-import { createAgentRunner } from '../agent/index.js';
+import { createAgentRunner, createAIPlanner } from '../agent/index.js';
 import type { AgentRunResult } from '../agent/index.js';
+import { createAIProviderFromConfig, resolveAIConfig, sanitizeAIConfig } from '../ai/index.js';
+import type { AIConfig } from '../ai/index.js';
 import type { Workspace, Language, ProjectMarker, RepairPlan, RepairAction } from '../core/models.js';
 
 export const program = new Command();
@@ -324,9 +326,22 @@ function printAgentResult(result: AgentRunResult): void {
 
 async function executeAgentRun(
   workspaceRoot: string,
-  options: { dryRun: boolean; json: boolean; approve?: string }
+  options: { dryRun: boolean; json: boolean; approve?: string; ai?: string; aiModel?: string; aiBaseUrl?: string }
 ): Promise<void> {
-  const runner = createAgentRunner();
+  const aiConfig: AIConfig = resolveAIConfig({
+    ...(options.ai === undefined ? {} : { provider: options.ai as AIConfig['provider'] }),
+    ...(options.aiModel === undefined ? {} : { model: options.aiModel }),
+    ...(options.aiBaseUrl === undefined ? {} : { baseUrl: options.aiBaseUrl }),
+  });
+  const aiProvider = createAIProviderFromConfig(aiConfig);
+  const aiPlanner = createAIPlanner(aiProvider, {
+    onFallback: (reason, details) => {
+      if (!options.json) {
+        console.log(`AI planning fallback (${reason})${details ? `: ${details}` : ''}`);
+      }
+    },
+  });
+  const runner = createAgentRunner({ plan: aiPlanner });
 
   const approvalCallback = (plan: RepairPlan, _manual: ReadonlyArray<{ description: string }>): Promise<ReadonlyArray<string>> => {
     const approved: string[] = [];
@@ -374,9 +389,67 @@ program
   .option('-d, --dry-run', 'Observe, analyze and plan without executing')
   .option('-p, --path <path>', 'Workspace path', '.')
   .option('--approve <action-id>', 'Approve a specific action by ID')
-  .action(async (options: { json: boolean; dryRun: boolean; path: string; approve?: string }) => {
+  .option('--ai <provider>', 'AI provider: none, local, or external (default: none)')
+  .option('--ai-model <model>', 'AI model name (local or external provider)')
+  .option('--ai-base-url <url>', 'AI provider base URL (local or external provider)')
+  .action(
+    async (options: {
+      json: boolean;
+      dryRun: boolean;
+      path: string;
+      approve?: string;
+      ai?: string;
+      aiModel?: string;
+      aiBaseUrl?: string;
+    }) => {
+      try {
+        await executeAgentRun(options.path, options);
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    }
+  );
+
+async function showAIStatus(json: boolean): Promise<void> {
+  const config = resolveAIConfig();
+  const provider = createAIProviderFromConfig(config);
+  const sanitized = sanitizeAIConfig(config);
+  let available = false;
+  try {
+    available = await provider.isAvailable();
+  } catch {
+    available = false;
+  }
+  const status = {
+    provider: sanitized.provider,
+    name: provider.name,
+    model: sanitized.model ?? '(not configured)',
+    baseUrl: sanitized.baseUrl ?? '(not configured)',
+    apiKeyConfigured: sanitized.apiKeyConfigured,
+    timeoutMs: sanitized.timeoutMs,
+    available,
+  };
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
+  console.log('ResolveIt AI Provider');
+  console.log(`  Provider: ${status.provider} (${status.name})`);
+  console.log(`  Model: ${status.model}`);
+  console.log(`  Base URL: ${status.baseUrl}`);
+  console.log(`  API key configured: ${status.apiKeyConfigured ? 'yes' : 'no'}`);
+  console.log(`  Timeout: ${status.timeoutMs}ms`);
+  console.log(`  Available: ${status.available ? 'yes' : 'no'}`);
+}
+
+program
+  .command('ai')
+  .description('Show AI provider configuration and availability (never prints secrets)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (options: { json: boolean }) => {
     try {
-      await executeAgentRun(options.path, options);
+      await showAIStatus(options.json);
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);

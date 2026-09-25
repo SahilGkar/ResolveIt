@@ -52,7 +52,56 @@ Agent Engine
 
 ## Status
 
-Phase 0: Architecture & Project Foundation (current)
+Phase 7: AI Provider Abstraction (current)
+
+Deterministic core (Phases 1–6) works fully without AI. AI planning is optional.
+
+## AI Configuration
+
+ResolveIt supports three AI modes. No mode requires code changes — only configuration.
+
+### No AI (default, zero-key setup)
+
+```bash
+resolveit run --ai none
+resolveit ai
+```
+
+Deterministic planning only. No network calls are made.
+
+### Local AI (Ollama-compatible)
+
+Point ResolveIt at your local endpoint and choose your own model
+(Qwen, Nemotron, or any Ollama-compatible model). ResolveIt never downloads
+models or starts the local service automatically.
+
+```bash
+export RESOLVEIT_AI_PROVIDER=local
+export RESOLVEIT_AI_MODEL=qwen2.5-coder:7b
+export RESOLVEIT_AI_BASE_URL=http://localhost:11434
+
+resolveit ai
+resolveit run --ai local
+```
+
+### External AI (OpenAI-compatible)
+
+Provide your own compatible endpoint, model, and API key.
+Never commit credentials to the repository — use environment variables.
+
+```bash
+export RESOLVEIT_AI_PROVIDER=external
+export RESOLVEIT_AI_MODEL=your-model
+export RESOLVEIT_AI_BASE_URL=https://your-gateway.example/v1
+export RESOLVEIT_AI_API_KEY=...
+
+resolveit ai
+resolveit run --ai external
+```
+
+`resolveit ai` shows provider, model, availability, and base URL.
+API keys are never printed. If the provider is unavailable or its output is
+unusable, ResolveIt falls back to deterministic planning with an explicit notice.
 
 ## Development
 

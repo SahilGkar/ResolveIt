@@ -684,3 +684,86 @@ export interface RollbackResult {
   readonly error?: string;
   readonly restoredFiles?: ReadonlyArray<string>;
 }
+
+// Phase 7: AI planning contracts (data models only; providers live in src/ai)
+export interface AIProposedAction {
+  readonly type: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly rationale?: string;
+}
+
+export interface AIPlanningResult {
+  readonly summary: string;
+  readonly reasoning?: string;
+  readonly confidence?: number;
+  readonly actions: ReadonlyArray<AIProposedAction>;
+}
+
+export interface AIPlanningContext {
+  readonly workspaceSummary: AIWorkspaceSummary;
+  readonly environmentSummary: AIEnvironmentSummary;
+  readonly requirements: ReadonlyArray<AIRequirementSummary>;
+  readonly diagnostics: ReadonlyArray<AIDiagnosticSummary>;
+  readonly availableTools: ReadonlyArray<AIToolDescriptor>;
+  readonly constraints: AIPlanningConstraints;
+  readonly previousAttempts: ReadonlyArray<AIPreviousAttempt>;
+  readonly verification?: AIVerificationSummary;
+}
+
+export interface AIWorkspaceSummary {
+  readonly rootPath: string;
+  readonly projectCount: number;
+  readonly projects: ReadonlyArray<{ name: string; type: string }>;
+  readonly languages: ReadonlyArray<string>;
+}
+
+export interface AIEnvironmentSummary {
+  readonly runtimes: ReadonlyArray<{ name: string; version: string; available: boolean }>;
+  readonly tools: ReadonlyArray<{ name: string; version: string; available: boolean }>;
+  readonly dockerAvailable: boolean;
+  readonly dockerRunning: boolean;
+}
+
+export interface AIRequirementSummary {
+  readonly ecosystem: string;
+  readonly type: string;
+  readonly name: string;
+  readonly versionConstraint?: string;
+  readonly sourceFile: string;
+}
+
+export interface AIDiagnosticSummary {
+  readonly code: string;
+  readonly category: string;
+  readonly severity: string;
+  readonly title: string;
+  readonly message: string;
+  readonly expected?: unknown;
+  readonly actual?: unknown;
+  readonly affectedFiles: ReadonlyArray<string>;
+}
+
+export interface AIToolDescriptor {
+  readonly name: string;
+  readonly description: string;
+  readonly allowedParameters: ReadonlyArray<string>;
+  readonly permissionLevel: RiskLevel;
+}
+
+export interface AIPlanningConstraints {
+  readonly maxRiskLevel: RiskLevel;
+  readonly allowedActions: ReadonlyArray<string>;
+  readonly systemModificationRequiresApproval: boolean;
+}
+
+export interface AIPreviousAttempt {
+  readonly actionFingerprint: string;
+  readonly actionType: string;
+  readonly success: boolean;
+}
+
+export interface AIVerificationSummary {
+  readonly success: boolean;
+  readonly summary: string;
+  readonly remainingDiagnostics: ReadonlyArray<string>;
+}

@@ -42,6 +42,8 @@ export interface DeterministicPlan {
   readonly plan: RepairPlan;
   readonly manualActions: ReadonlyArray<PlannedManualAction>;
   readonly skippedFingerprints: ReadonlyArray<string>;
+  readonly aiUsed?: boolean;
+  readonly aiRejections?: ReadonlyArray<string>;
 }
 
 function stableStringify(value: unknown): string {

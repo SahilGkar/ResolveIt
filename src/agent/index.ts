@@ -59,3 +59,6 @@ export type {
 } from './runner.js';
 
 export type { AgentEvent, AgentEventType, AgentEventCallback } from './events.js';
+
+export { createAIPlanner } from './ai-planner.js';
+export type { AIPlannerCallbacks } from './ai-planner.js';

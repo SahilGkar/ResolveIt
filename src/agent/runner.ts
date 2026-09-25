@@ -1,4 +1,5 @@
 import type {
+  AIPreviousAttempt,
   Diagnostic,
   PermissionDecision,
   RepairAction,
@@ -27,7 +28,13 @@ export const DEFAULT_MAX_ITERATIONS = 3;
 export type ObserverFn = (workspaceRoot: string) => Promise<AgentObservation>;
 export type AnalyzerFn = (observation: AgentObservation) => Promise<AgentAnalysis>;
 export type PlannerFn = (
-  input: { analysis: AgentAnalysis; workspaceRoot: string; attemptedFingerprints: ReadonlySet<string> }
+  input: {
+    analysis: AgentAnalysis;
+    workspaceRoot: string;
+    attemptedFingerprints: ReadonlySet<string>;
+    lastReport?: VerificationReport;
+    previousAttempts?: ReadonlyArray<AIPreviousAttempt>;
+  }
 ) => Promise<DeterministicPlan>;
 
 export interface PlanExecutor {
@@ -192,6 +199,7 @@ export class AgentRunner {
     const failedFingerprints = new Set<string>();
     const events: AgentEvent[] = [];
     let seq = 0;
+    let lastReport: VerificationReport | undefined;
 
     const emit = (type: AgentEventType, data?: Readonly<Record<string, unknown>>): void => {
       seq += 1;
@@ -273,10 +281,17 @@ export class AgentRunner {
         iterations += 1;
         transition('planning');
 
+        const previousAttempts: AIPreviousAttempt[] = executedActions.map((entry) => ({
+          actionFingerprint: actionFingerprint(entry.action),
+          actionType: entry.action.type,
+          success: entry.result.success,
+        }));
         const deterministic = await this.planFn({
           analysis,
           workspaceRoot: options.workspaceRoot,
           attemptedFingerprints: failedFingerprints,
+          ...(lastReport === undefined ? {} : { lastReport }),
+          previousAttempts,
         });
         plans.push(deterministic);
         emit('plan-created', {
@@ -287,6 +302,8 @@ export class AgentRunner {
             permissionLevel: action.permissionLevel,
           })),
           manualActions: deterministic.manualActions.length,
+          ...(deterministic.aiUsed === undefined ? {} : { aiUsed: deterministic.aiUsed }),
+          ...(deterministic.aiRejections === undefined ? {} : { aiRejections: deterministic.aiRejections }),
         });
 
         transition('awaiting-approval');
@@ -378,6 +395,7 @@ export class AgentRunner {
         const afterAnalysis = await this.analyzeFn(afterObservation);
         const report = await this.verifyPlanFn(execution.results, analysis, afterAnalysis, options.workspaceRoot);
         verificationReports.push(report);
+        lastReport = report;
         emit('verification-completed', { success: report.success, summary: report.summary });
 
         if (report.success) {

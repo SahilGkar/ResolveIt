@@ -197,4 +197,26 @@ export {
   AgentRunner,
   createAgentRunner,
   DEFAULT_MAX_ITERATIONS,
+  createAIPlanner,
 } from './agent/index.js';
+
+export {
+  resolveAIConfig,
+  sanitizeAIConfig,
+  normalizeAIProviderType,
+  DEFAULT_AI_CONFIG,
+  DEFAULT_AI_TIMEOUT_MS,
+  DEFAULT_LOCAL_BASE_URL,
+  AIProviderError,
+  isAIProviderError,
+  buildAIPlanningContext,
+  describeAvailableTools,
+  toolNameForActionType,
+  buildPlanningPrompt,
+  parseAIPlanningResponse,
+  validateAIAction,
+  validateAIPlan,
+  LocalAIProvider,
+  ExternalAIProvider,
+  createAIProviderFromConfig,
+} from './ai/index.js';
