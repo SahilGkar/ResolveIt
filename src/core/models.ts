@@ -246,9 +246,14 @@ export type DiagnosticSource =
 export interface RepairAction {
   readonly id: string;
   readonly type: RepairActionType;
+  readonly permissionLevel: RiskLevel;
   readonly description: string;
   readonly target: RepairTarget;
-  readonly payload: Readonly<Record<string, unknown>>;
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly affectedFiles?: ReadonlyArray<string>;
+  readonly reversible?: boolean;
+  readonly estimatedImpact?: string;
+  readonly requiresElevation?: boolean;
   readonly riskLevel: RiskLevel;
   readonly prerequisites: ReadonlyArray<string>;
   readonly rollback?: RollbackAction;
@@ -275,9 +280,63 @@ export interface RepairTarget {
 
 export type RiskLevel = 'read-only' | 'project-modification' | 'system-modification';
 
+export type PermissionDecision = 'allowed' | 'requires-approval' | 'denied';
+
 export interface RollbackAction {
   readonly type: RepairActionType;
   readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export interface RepairTool {
+  readonly name: string;
+  readonly description: string;
+  readonly permissionLevel: RiskLevel;
+  readonly supportedActionTypes: ReadonlyArray<RepairActionType>;
+  
+  validate(action: RepairAction): ValidationResult;
+  execute(action: RepairAction, dryRun: boolean): Promise<RepairResult>;
+}
+
+export interface ValidationResult {
+  readonly valid: boolean;
+  readonly errors: ReadonlyArray<string>;
+  readonly warnings: ReadonlyArray<string>;
+}
+
+export interface RepairResult {
+  readonly success: boolean;
+  readonly output?: string;
+  readonly modifiedFiles?: ReadonlyArray<string>;
+  readonly rollbackData?: Readonly<Record<string, unknown>>;
+  readonly error?: string;
+}
+
+export interface FileSnapshot {
+  readonly filePath: string;
+  readonly content: string;
+  readonly timestamp: Date;
+}
+
+export interface Snapshot {
+  readonly id: string;
+  readonly actionId: string;
+  readonly files: ReadonlyArray<FileSnapshot>;
+  readonly createdAt: Date;
+}
+
+export interface AuditLogEntry {
+  readonly id: string;
+  readonly timestamp: Date;
+  readonly actionId: string;
+  readonly actionType: RepairActionType;
+  readonly permissionLevel: RiskLevel;
+  readonly approvalState: PermissionDecision;
+  readonly target: RepairTarget;
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly affectedFiles: ReadonlyArray<string>;
+  readonly executionResult: 'success' | 'failure' | 'pending';
+  readonly error?: string;
+  readonly rollbackId?: string;
 }
 
 export interface RepairPlan {
@@ -603,4 +662,25 @@ export interface ContainerRequirement {
   readonly sourceFile: string;
   readonly sourceSection?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface RepairToolRegistry {
+  register(tool: RepairTool): void;
+  unregister(name: string): void;
+  getTool(name: string): RepairTool | undefined;
+  getToolsByActionType(actionType: RepairActionType): ReadonlyArray<RepairTool>;
+  getAllTools(): ReadonlyArray<RepairTool>;
+  findToolForAction(action: RepairAction): RepairTool | undefined;
+}
+
+export interface RepairExecutionResult {
+  readonly plan: RepairPlan;
+  readonly results: ReadonlyArray<{ action: RepairAction; result: RepairResult }>;
+  readonly success: boolean;
+}
+
+export interface RollbackResult {
+  readonly success: boolean;
+  readonly error?: string;
+  readonly restoredFiles?: ReadonlyArray<string>;
 }

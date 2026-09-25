@@ -8,8 +8,6 @@ import type {
   VerificationResult,
   AgentState,
   AgentEvidence,
-  DiagnosisResult,
-  PlanContext,
   Language,
   Ecosystem,
   Tool,
@@ -17,8 +15,6 @@ import type {
   Dependency,
   RiskLevel,
   AgentLifecycleStage,
-  PlanConstraints,
-  RootCause,
   EnvironmentSnapshot,
   SourceFile,
   DirectoryInfo,
@@ -49,6 +45,21 @@ import type {
   OSInfo,
   ContainerInfo,
   ToolInstallation,
+  RepairTool,
+  ValidationResult,
+  RepairResult,
+  FileSnapshot,
+  Snapshot,
+  AuditLogEntry,
+  PermissionDecision,
+  RepairTarget,
+  RepairActionType,
+  DiagnosisResult,
+  PlanContext,
+  PlanConstraints,
+  RootCause,
+  RollbackAction,
+  RepairExecutionResult,
 } from './models.js';
 
 export type {
@@ -61,8 +72,6 @@ export type {
   VerificationResult,
   AgentState,
   AgentEvidence,
-  DiagnosisResult,
-  PlanContext,
   Language,
   Ecosystem,
   Tool,
@@ -70,8 +79,6 @@ export type {
   Dependency,
   RiskLevel,
   AgentLifecycleStage,
-  PlanConstraints,
-  RootCause,
   EnvironmentSnapshot,
   SourceFile,
   DirectoryInfo,
@@ -102,6 +109,21 @@ export type {
   OSInfo,
   ContainerInfo,
   ToolInstallation,
+  RepairTool,
+  ValidationResult,
+  RepairResult,
+  FileSnapshot,
+  Snapshot,
+  AuditLogEntry,
+  PermissionDecision,
+  RepairTarget,
+  RepairActionType,
+  DiagnosisResult,
+  PlanContext,
+  PlanConstraints,
+  RootCause,
+  RollbackAction,
+  RepairExecutionResult,
 };
 
 export interface WorkspaceManager {
@@ -186,13 +208,13 @@ export interface DiagnosticSource {
   diagnose(workspace: Workspace): Promise<ReadonlyArray<Diagnostic>>;
 }
 
-export interface RepairTool {
-  readonly actionType: string;
-  readonly supportedRiskLevels: ReadonlyArray<RiskLevel>;
-  
-  canHandle(action: RepairAction): boolean;
-  execute(action: RepairAction, context: RepairContext): Promise<RepairExecutionResult>;
-  rollback(action: RepairAction, context: RepairContext): Promise<RollbackResult>;
+export interface RepairToolRegistry {
+  register(tool: RepairTool): void;
+  unregister(name: string): void;
+  getTool(name: string): RepairTool | undefined;
+  getToolsByActionType(actionType: RepairActionType): ReadonlyArray<RepairTool>;
+  getAllTools(): ReadonlyArray<RepairTool>;
+  findToolForAction(action: RepairAction): RepairTool | undefined;
 }
 
 export interface RepairContext {
@@ -200,18 +222,6 @@ export interface RepairContext {
   readonly project?: Project;
   readonly environment?: Environment;
   readonly dryRun: boolean;
-}
-
-export interface RepairExecutionResult {
-  readonly success: boolean;
-  readonly output: string;
-  readonly diagnostics: ReadonlyArray<Diagnostic>;
-  readonly metadata: Readonly<Record<string, unknown>>;
-}
-
-export interface RollbackResult {
-  readonly success: boolean;
-  readonly output: string;
 }
 
 export interface VerificationEngine {
@@ -281,8 +291,6 @@ export interface PermissionPolicy {
   readonly requireConfirmationForProjectModification: boolean;
   readonly requireConfirmationForSystemModification: boolean;
 }
-
-export type PermissionDecision = 'allowed' | 'requires-approval' | 'denied';
 
 export interface AuditLogger {
   log(event: AuditEvent): Promise<void>;
@@ -391,4 +399,10 @@ export interface DiagnosticEngine {
   ): Promise<ReadonlyArray<Diagnostic>>;
   registerRule(rule: DiagnosticRule): void;
   getRules(): ReadonlyArray<DiagnosticRule>;
+}
+
+// Phase 5: Repair & Permission System interfaces
+export interface RepairPlanner {
+  createPlan(diagnostics: ReadonlyArray<Diagnostic>, context: PlanContext): Promise<RepairPlan>;
+  validatePlan(plan: RepairPlan): ValidationResult;
 }

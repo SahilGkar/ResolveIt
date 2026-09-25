@@ -72,6 +72,46 @@ Runs deterministic diagnostics against projects and environments. Produces struc
 ### Repair Engine
 Executes approved repair actions. Coordinates with permission layer for user approval.
 
+Phase 5 implementation (`src/repair/`):
+- `RepairPlannerImpl` — builds a `RepairPlan` from diagnostic `remediationCandidates`,
+  honoring `PlanContext.constraints` (`allowedActions`, `maxRiskLevel`). Every planned
+  action carries `workspaceRoot` in its parameters, scoped from `context.workspace.rootPath`,
+  so tools never guess the workspace. `validatePlan` rejects actions missing `id`/`type`.
+- `RepairToolRegistryImpl` — only registered `RepairTool`s may execute. `findToolForAction`
+  selects among tools supporting the action type and prefers the first tool whose
+  `validate(action)` passes, falling back to the first candidate. There is no
+  unrestricted `execute(command: string)` repair API.
+- `BaseRepairTool` — shared contract (`validate`/`execute`) plus hardened path helpers:
+  `resolveWorkspaceRoot` (explicit `parameters.workspaceRoot`, else `action.target.filePath`;
+  fails with a structured validation error when neither is present — never silently
+  falls back to `process.cwd()`), `validateWorkspacePath` (rejects `..` segments and any
+  resolved path outside the workspace using `path.relative` with drive-letter/UNC handling
+  instead of string-prefix checks), and `writeFile` (creates parent dirs via `dirname`).
+- `CreateFileTool` (`project-modification`) — creates files with validated content inside
+  the workspace. `ModifyFileTool` (`project-modification`) — deterministic single
+  first-occurrence text replacement; fails when the search text is absent; dry-run returns
+  before touching the filesystem.
+- `InstallDependencyTool` (`project-modification`) — package installation commands are
+  constructed internally from validated structured parameters (`ECOSYSTEM_COMMANDS` for
+  npm/pip/cargo/go/composer/bundler). Package names and versions are allowlist-validated
+  (rejects shell metacharacters, whitespace, flag injection such as `--save-dev` as a
+  package name, and path traversal); arbitrary shell command strings are never accepted.
+- `CreatePythonVenvTool` (`project-modification`) — runs `<python> -m venv <path>` with the
+  interpreter restricted to an allowlist (`python`, `python3[.x]`, `py`, `python.exe`) and
+  the target path confined to the workspace.
+- `RepairExecutor` — per-plan execution: permission check (via `approvalCallback` or
+  `PermissionManager`), pre-execution audit entry (`pending`/`failure`), tool lookup,
+  tool validation, snapshot of `affectedFiles` (skipped in dry-run), tool execution, and
+  post-execution audit entry (`success`/`failure`). Actions without `allowed` approval
+  never execute. Snapshot/audit managers are scoped to the `executePlan` workspace root.
+- `SnapshotManager` — persists per-action file snapshots under `.resolveit/snapshots` and
+  restores them on rollback; missing/corrupt snapshots report failure (`false`) instead
+  of throwing.
+- `AuditLoggerImpl` — appends JSONL audit entries per day under `.resolveit/audit`.
+  All logged parameters pass through `sanitizeParameters`, which redacts sensitive keys
+  (password, secret, token, apiKey, authorization, privateKey, credentials, including
+  nested objects) so secrets are never written to logs.
+
 ### Verification Engine
 Verifies that repairs achieved their intended effect. Runs post-repair diagnostics.
 
@@ -81,8 +121,26 @@ Enforces safety policy. Manages approval flows for three action levels:
 - **Project modification**: Install dependencies, modify manifests, create environments, update configuration
 - **System-level modification**: Install system software, modify system configuration, require administrator privileges
 
+Phase 5 implementation (`src/safety/permission.ts`, enforced in `src/repair/index.ts`):
+- `getActionRiskLevel` maps each `RepairActionType` to a `RiskLevel`; unknown types default
+  to `read-only`.
+- `checkPermission` returns `allowed` for read-only (when `autoApproveReadOnly`), and
+  `requires-approval` for project/system modifications under the default policy. System
+  modifications can additionally be `denied` by policy and are never executed silently.
+- `PermissionManagerImpl` caches per-action decisions, supports `recordDecision` overrides
+  and policy updates, and `requestApproval` returns an `ApprovalResult` distinguishing
+  auto-approved, denied-by-policy, and requires-user-approval outcomes.
+- The executor runs a tool only when the decision is exactly `allowed`. Dry-run mode
+  short-circuits before any filesystem or process side effect (no file writes, no snapshot
+  writes for the action, no spawned installs), and denied actions produce a `failure` audit
+  record without executing.
+- CLI (`resolveit repair`): `--dry-run`/`--json` only print the plan; without `--approve <action-id>`
+  each action is presented for approval and skipped unless explicitly approved.
+
 ### Audit Logger
 Records all actions, decisions, and outcomes for traceability and debugging.
+See Repair Engine above for the Phase 5 `AuditLoggerImpl` (JSONL records for
+pending/success/failure outcomes with secret redaction).
 
 ### Language / Ecosystem Analyzers
 Pluggable analyzers for specific languages/ecosystems. Implement language-specific diagnostic and repair logic.
@@ -192,8 +250,26 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Diagnostic engine implementation
 - AI agent implementation
 - Language analyzers
-- Repair system
 - VS Code extension
-- Package installation logic
 - Docker/database/web UI
 - Any autonomous behavior
+
+## Phase 5 Status (Implemented)
+
+- Repair tool registry with validating-tool selection (`src/repair/registry.ts`)
+- Four project-modification repair tools: file creation, file modification,
+  dependency installation (npm/pip/cargo/go/composer/bundler), Python venv creation
+- Permission manager with read-only / project-modification / system-modification levels
+- Repair executor with approval gating, dry-run, snapshots, and audit logging
+- Audit secret redaction via `sanitizeParameters`
+- CLI: `resolveit repair [--dry-run] [--json] [-p <path>] [--approve <action-id>]`
+- Regression tests: `tests/repair-tools.test.ts`, `tests/repair-extended.test.ts`,
+  `tests/diagnostics.test.ts`
+
+## Deferred / Known Limitations
+
+- Real dependency installs and venv creation spawn subprocesses (`shell: true` on Windows
+  for `.cmd` shims); inputs are allowlist-validated but execution still depends on host tools.
+- Snapshots cover file content only (no manifest/dependency-state rollback).
+- `AuditLoggerImpl.query` is a stub returning no results.
+- The executor has no retry/re-plan loop; failed verification re-planning belongs to Phase 6.

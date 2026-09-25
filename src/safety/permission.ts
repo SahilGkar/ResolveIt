@@ -1,5 +1,5 @@
-import type { RepairAction, RiskLevel, PermissionDecision, PermissionPolicy, ApprovalResult } from '../core/interfaces.js';
-import type { RepairActionType } from '../core/models.js';
+import type { RepairAction, RiskLevel, PermissionDecision } from '../core/models.js';
+import type { RepairActionType, PermissionPolicy, ApprovalResult } from '../core/interfaces.js';
 
 export const DEFAULT_PERMISSION_POLICY: PermissionPolicy = {
   readOnlyActions: [

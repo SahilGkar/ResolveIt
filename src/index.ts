@@ -55,6 +55,9 @@ export {
   RuntimeRequirement,
   ToolchainRequirement,
   ContainerRequirement,
+  RepairToolRegistry,
+  RepairExecutionResult,
+  RollbackResult,
 } from './core/models.js';
 
 export {
@@ -62,7 +65,6 @@ export {
   LanguageAnalyzer,
   EnvironmentAdapter,
   DiagnosticEngine,
-  RepairTool,
   VerificationEngine,
   AIProvider,
   Agent,
@@ -73,13 +75,10 @@ export {
   RuntimeInfo,
   CommandResult,
   RepairContext,
-  RepairExecutionResult,
-  RollbackResult,
   VerificationContext,
   VerificationRule,
   ApprovalResult,
   PermissionPolicy,
-  PermissionDecision,
   AuditEvent,
   AuditActor,
   AuditTarget,
@@ -166,3 +165,11 @@ export {
   projectDiagnosticRule,
   type DiagnoseOptions,
 } from './diagnostics/index.js';
+
+export {
+  createRepairExecutor,
+  createRepairPlanner,
+  createAuditLogger,
+  createSnapshotManager,
+  type RepairExecutionOptions,
+} from './repair/index.js';
