@@ -1,0 +1,5 @@
+services:
+  api:
+    image: node:latest
+    build:
+      context: .

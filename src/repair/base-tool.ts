@@ -1,6 +1,7 @@
 import type { RepairTool, ValidationResult, RepairResult, RepairAction, RiskLevel, RepairActionType } from '../core/models.js';
 import { promises as fs } from 'fs';
-import { resolve, isAbsolute, relative, dirname, parse, sep } from 'path';
+import { resolve, dirname } from 'path';
+import { checkWorkspaceContainment, verifyWorkspaceTarget } from '../safety/paths.js';
 
 export abstract class BaseRepairTool implements RepairTool {
   readonly name: string;
@@ -38,27 +39,11 @@ export abstract class BaseRepairTool implements RepairTool {
   abstract execute(action: RepairAction, dryRun: boolean): Promise<RepairResult>;
 
   protected validateWorkspacePath(workspaceRoot: string, filePath: string): ValidationResult {
-    const errors: string[] = [];
-
-    if (!workspaceRoot || typeof workspaceRoot !== 'string' || workspaceRoot.trim() === '') {
-      errors.push('Missing workspace root for path validation');
-      return { valid: false, errors, warnings: [] };
+    const result = checkWorkspaceContainment(workspaceRoot, filePath);
+    if (result.ok) {
+      return { valid: true, errors: [], warnings: [] };
     }
-
-    if (!filePath || typeof filePath !== 'string' || filePath.trim() === '') {
-      errors.push('Missing file path for path validation');
-      return { valid: false, errors, warnings: [] };
-    }
-
-    if (this.containsTraversalSegments(filePath)) {
-      errors.push(`File path contains directory traversal: ${filePath}`);
-    }
-
-    if (!this.isInsideWorkspace(workspaceRoot, filePath)) {
-      errors.push(`File path ${filePath} is outside workspace`);
-    }
-
-    return { valid: errors.length === 0, errors, warnings: [] };
+    return { valid: false, errors: [result.error], warnings: [] };
   }
 
   protected resolveWorkspaceRoot(
@@ -78,45 +63,23 @@ export abstract class BaseRepairTool implements RepairTool {
   }
 
   protected resolveWorkspaceFile(workspaceRoot: string, filePath: string): string {
-    if (isAbsolute(filePath)) {
-      return resolve(filePath);
+    const checked = checkWorkspaceContainment(workspaceRoot, filePath);
+    if (!checked.ok) {
+      throw new Error(checked.error);
     }
-    return resolve(workspaceRoot, filePath);
+    return checked.resolvedPath;
   }
 
-  private containsTraversalSegments(filePath: string): boolean {
-    const normalized = filePath.replace(/\\/g, '/');
-    const segments = normalized.split('/');
-    return segments.includes('..');
-  }
-
-  private isInsideWorkspace(workspaceRoot: string, filePath: string): boolean {
-    const resolvedWorkspace = resolve(workspaceRoot);
-    const resolvedCandidate = isAbsolute(filePath) ? resolve(filePath) : resolve(resolvedWorkspace, filePath);
-
-    const workspaceRootPart = parse(resolvedWorkspace).root.toLowerCase();
-    const candidateRootPart = parse(resolvedCandidate).root.toLowerCase();
-    if (workspaceRootPart !== candidateRootPart) {
-      return false;
-    }
-
-    const rel = relative(resolvedWorkspace, resolvedCandidate);
-    if (rel === '') {
-      return true;
-    }
-    if (isAbsolute(rel)) {
-      return false;
-    }
-    const segments = rel.split(sep);
-    if (segments[0] === '..') {
-      return false;
-    }
-    return true;
+  protected async resolveSafeTarget(
+    workspaceRoot: string,
+    filePath: string
+  ): Promise<{ readonly ok: true; readonly resolvedPath: string } | { readonly ok: false; readonly error: string }> {
+    return verifyWorkspaceTarget(workspaceRoot, filePath);
   }
 
   protected async createSnapshot(workspaceRoot: string, filePath: string): Promise<string | undefined> {
     try {
-      const fullPath = resolve(workspaceRoot, filePath);
+      const fullPath = this.resolveWorkspaceFile(workspaceRoot, filePath);
       const content = await fs.readFile(fullPath, 'utf-8');
       return content;
     } catch {
@@ -125,8 +88,11 @@ export abstract class BaseRepairTool implements RepairTool {
   }
 
   protected async writeFile(workspaceRoot: string, filePath: string, content: string): Promise<void> {
-    const fullPath = this.resolveWorkspaceFile(workspaceRoot, filePath);
-    await fs.mkdir(dirname(fullPath), { recursive: true });
-    await fs.writeFile(fullPath, content, 'utf-8');
+    const safe = await this.resolveSafeTarget(workspaceRoot, filePath);
+    if (!safe.ok) {
+      throw new Error(safe.error);
+    }
+    await fs.mkdir(dirname(safe.resolvedPath), { recursive: true });
+    await fs.writeFile(safe.resolvedPath, content, 'utf-8');
   }
 }

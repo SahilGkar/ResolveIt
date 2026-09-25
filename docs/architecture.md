@@ -254,6 +254,130 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 11 Status (Implemented): Security, Docker & Audit Hardening
+
+Phase 11 makes ResolveIt conservative, auditable, and difficult to misuse. It
+adds no generic command execution, no privilege escalation, and no autonomous
+security scanner; every control protects a concrete boundary:
+
+```text
+Untrusted project
+      ↓
+Static analysis (never executes project-controlled code)
+      ↓
+Structured evidence (summaries, secrets redacted, .env never read)
+      ↓
+AI reasoning (optional; output is untrusted data)
+      ↓
+Validated action (tool allowlist, parameter allowlist, path checks)
+      ↓
+Permission boundary (PermissionManager; AI cannot approve or escalate)
+      ↓
+Allowlisted repair tool (structured args, safe command runner)
+      ↓
+Audit (sanitized, correlated by runId/actionId)
+      ↓
+Verification
+```
+
+### Threat model
+
+- **T1 — Malicious project.** Analysis is read-only and static: the scanner
+  never follows symlinks (`src/scanners/scanner.ts`), `setup.py` is never
+  executed, manifests over 1 MiB are skipped with a warning, and at most 500
+  manifest files are parsed per run. Repair tools resolve every write target
+  through canonical containment plus symlink resolution and fail closed.
+- **T2 — Malicious or compromised AI output.** `validateAIPlan`
+  (`src/ai/validation.ts`) enforces: known tools only, parameter allowlist,
+  privilege/command-field rejection (including `spawn`), relative in-workspace
+  paths only for path parameters, per-parameter and total size caps, nesting
+  depth cap with circular-payload rejection, at most 16 actions per plan, and
+  tool-owned permission levels. `parseAIPlanningResponse` rejects responses
+  over 256 KiB and action lists over 32 entries. The planning prompt states
+  that project content is untrusted data, never instructions.
+- **T3 — Malicious repair parameters.** `checkWorkspaceContainment`
+  (`src/safety/paths.ts`) decodes percent-encoded traversal (multi-round),
+  rejects NUL/control characters, UNC paths, and out-of-workspace drive
+  roots, and uses `path.relative` segment checks instead of string prefixes.
+  Package names/versions reject shell metacharacters, leading dashes (flag
+  injection), whitespace, and traversal; the Python interpreter is restricted
+  to an allowlist pattern. The safe command runner re-validates executable
+  (bare allowlisted name only), arguments (no shell metacharacters), and
+  working directory (inside the allowed root).
+- **T4 — Sensitive information.** `src/safety/secrets.ts` provides
+  key-based sanitization, bearer/Basic/API-key/private-key text redaction,
+  environment-variable scrubbing, and `.env` detection. `.env` files are never
+  parsed as requirements; the AI context carries summaries only with evidence
+  truncated and redacted; audit records, repair errors, child-process output,
+  agent run snapshots, and VS Code logs pass through redaction. Redaction is
+  defense-in-depth, not a perfect secret detector.
+- **T5 — Docker risk.** `dockerSecurityDiagnosticRule`
+  (`src/diagnostics/rules/docker-security.ts`) performs diagnostic-only static
+  analysis of Dockerfiles and Compose files: privileged mode (critical),
+  Docker socket mounts (critical), host filesystem mounts (error/warning),
+  host networking and host PID/IPC (error), dangerous capabilities
+  (error), unpinned images (warning, framed as posture, never malicious), and
+  broad build contexts (warning). Findings extend the existing `Diagnostic`
+  model with file/line evidence and manual remediation guidance; they carry
+  no remediation candidates, so no repair tool can auto-apply them. Docker is
+  never started, and images are never built, during diagnostics.
+
+### Filesystem boundary
+
+Lexical containment (`checkWorkspaceContainment`) plus execution-time symlink
+verification (`verifyNoSymlinkEscape`): the nearest existing ancestor of the
+target is resolved with `realpath` and must remain inside the workspace's
+real path. Any inspection failure refuses the write. Behavior is documented
+as fail-closed; symlink handling does not vary by OS beyond what
+`lstat`/`realpath` report.
+
+### AI trust boundary
+
+Project content is evidence, not authority. AI output can only name
+registered tools with allowlisted parameters; workspace roots are overwritten
+with the run root; permission levels come from the tool, never the model.
+Deterministic tool validation and `PermissionManager` re-check every
+AI-proposed action before execution, and the agent falls back to
+deterministic planning when AI output is fully rejected
+(`src/agent/ai-planner.ts`).
+
+### Command execution policy
+
+Two runners (`src/environment/command-runner.ts`): the generic
+`createCommandRunner` runs only ResolveIt-authored detection probes with
+fixed arguments (never project- or AI-controlled strings). All repair-time
+execution uses `createSafeCommandRunner` with a per-tool executable
+allowlist, structured pre-validated arguments, working-directory containment,
+a scrubbed environment (safe keys only plus explicit extras), enforced
+timeouts (capped at 120 s), 256 KiB output caps, and secret redaction on all
+captured output. On Windows the shell is enabled only for allowlisted
+executables whose arguments have already passed metacharacter rejection.
+
+### Audit model
+
+`AuditLoggerImpl` (`src/repair/index.ts`) appends sanitized JSONL entries and
+implements a deterministic file-backed `query`: filter by action/run/
+workspace/time, stable timestamp ordering, bounded results (default 200),
+malformed records skipped. Entries correlate
+`runId → plan → action → approval → execution → verification` using
+collision-resistant `randomUUID`-based identifiers (`src/safety/ids.ts`;
+replaces the previous `Date.now()` IDs for audit/repair correlation).
+Requirement/parser IDs remain ephemeral scan-local labels and are not
+used for correlation. Never logged: API keys, bearer tokens, full `.env`,
+secret environment variables, unnecessary file contents, or raw sensitive
+prompts.
+
+### Important limits (`src/safety/limits.ts`)
+
+Paths 1024 chars; repair content 256 KiB; find/replace 64 KiB each; AI
+response 256 KiB / 16 actions / 16 KiB per parameter set / depth 5; audit
+query 200 results / 5 MiB scanned; command output 256 KiB / timeout 120 s;
+requirement files 1 MiB / 500 files; Dockerfile analysis 512 KiB / 50
+findings; AI context 100 diagnostics / 500 requirements with 2000-char
+evidence. Limits are generous enough for normal projects; oversized inputs
+degrade to explicit warnings or manual actions, never silent truncation of
+security decisions.
+
 ## Phase 10 Status (Implemented): Multi-Ecosystem Hardening
 
 ### Project detection and multi-project model

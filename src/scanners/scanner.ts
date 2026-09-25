@@ -123,6 +123,12 @@ export async function scanWorkspace(rootPath: string, options: ScannerOptions = 
         const entryPath = resolve(currentPath, entry.name);
         const entryRelative = normalizePath(relative(absoluteRoot, entryPath));
         
+        if (entry.isSymbolicLink()) {
+          // Never follow symlinks during read-only analysis. A symlink that
+          // appears inside the workspace may resolve outside it; repair tools
+          // re-verify containment with symlink resolution and fail closed.
+          continue;
+        }
         if (entry.isDirectory()) {
           if (opts.excludedDirs.includes(entry.name) || isExcludedPath(entryRelative, opts.excludedDirs)) {
             continue;

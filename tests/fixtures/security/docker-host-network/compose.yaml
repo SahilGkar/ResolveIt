@@ -1,0 +1,5 @@
+services:
+  proxy:
+    image: intranet.example.com/proxy:2.0.1
+    network_mode: host
+    pid: host

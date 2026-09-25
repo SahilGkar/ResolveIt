@@ -2,6 +2,7 @@ import { BaseRepairTool } from '../base-tool.js';
 import type { ValidationResult, RepairResult, RepairAction } from '../../core/models.js';
 import { promises as fs } from 'fs';
 import { dirname } from 'path';
+import { SECURITY_LIMITS, byteLength } from '../../safety/limits.js';
 
 interface CreateFileParameters {
   readonly path: string;
@@ -29,20 +30,24 @@ export class CreateFileTool extends BaseRepairTool {
 
     if (!params.path || typeof params.path !== 'string') {
       errors.push('Missing or invalid path parameter');
+    } else {
+      if (params.path.length > SECURITY_LIMITS.maxPathLength) {
+        errors.push(`Path exceeds maximum length (${SECURITY_LIMITS.maxPathLength})`);
+      }
     }
 
     if (params.content === undefined || params.content === null) {
       errors.push('Missing content parameter');
-    }
-
-    if (params.path && params.path.includes('..')) {
-      errors.push('Path contains directory traversal');
+    } else if (typeof params.content !== 'string') {
+      errors.push('Invalid content parameter: content must be a string');
+    } else if (byteLength(params.content) > SECURITY_LIMITS.maxRepairContentBytes) {
+      errors.push(`Content exceeds maximum size (${SECURITY_LIMITS.maxRepairContentBytes} bytes)`);
     }
 
     const rootResolution = this.resolveWorkspaceRoot(action, params);
     if (!rootResolution.ok) {
       errors.push(rootResolution.error);
-    } else if (params.path) {
+    } else if (params.path && typeof params.path === 'string') {
       const containment = this.validateWorkspacePath(rootResolution.root, params.path);
       for (const err of containment.errors) {
         if (!errors.includes(err)) {
@@ -71,8 +76,6 @@ export class CreateFileTool extends BaseRepairTool {
     }
     const workspaceRoot = rootResolution.root;
 
-    const fullPath = this.resolveWorkspaceFile(workspaceRoot, params.path);
-
     if (dryRun) {
       return {
         success: true,
@@ -81,9 +84,14 @@ export class CreateFileTool extends BaseRepairTool {
       };
     }
 
+    const safe = await this.resolveSafeTarget(workspaceRoot, params.path);
+    if (!safe.ok) {
+      return { success: false, error: safe.error };
+    }
+
     try {
-      await fs.mkdir(dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, params.content, 'utf-8');
+      await fs.mkdir(dirname(safe.resolvedPath), { recursive: true });
+      await fs.writeFile(safe.resolvedPath, params.content, 'utf-8');
 
       return {
         success: true,

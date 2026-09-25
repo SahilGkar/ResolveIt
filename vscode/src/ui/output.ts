@@ -8,7 +8,9 @@ export interface OutputChannelLike {
 export function redactSecrets(line: string): string {
   return line
     .replace(/[A-Za-z0-9_.-]*api[_-]?key[A-Za-z0-9_.-]*\s*[:=]\s*['"]?\S+['"]?/gi, '[REDACTED_API_KEY]')
-    .replace(/Bearer\s+\S+/g, 'Bearer [REDACTED]');
+    .replace(/Bearer\s+\S+/g, 'Bearer [REDACTED]')
+    .replace(/Basic\s+[A-Za-z0-9+/=]{8,}/g, 'Basic [REDACTED]')
+    .replace(/-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]');
 }
 
 export class Logger {

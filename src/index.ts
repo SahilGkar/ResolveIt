@@ -112,6 +112,14 @@ export type { AIConfig, SanitizedAIConfig } from './ai/config.js';
 
 export { DEFAULT_PERMISSION_POLICY, getActionRiskLevel, checkPermission, PermissionManagerImpl } from './safety/permission.js';
 
+export { checkWorkspaceContainment, verifyWorkspaceTarget, verifyNoSymlinkEscape } from './safety/paths.js';
+
+export { isSensitiveKey, sanitizeParameters as sanitizeRecord, redactSecrets, isSecretEnvVar, sanitizeEnvironment, isEnvFile } from './safety/secrets.js';
+
+export { SECURITY_LIMITS, truncateText, byteLength, parameterDepth } from './safety/limits.js';
+
+export { createId, createActionId, createPlanId, createAuditId, createSnapshotId, createRunId, createDiagnosticId, createRemediationId } from './safety/ids.js';
+
 export { AGENT_LIFECYCLE_STAGES, LIFECYCLE_TRANSITIONS, canTransition, createInitialAgentState, updateAgentState, transitionAgentState, AgentEngine, SimpleAgentEngine } from './agent/lifecycle.js';
 
 export { scanWorkspace, type ScannerOptions } from './scanners/index.js';
@@ -156,7 +164,10 @@ export {
   CommandRunner,
   createCommandRunner,
   createMockCommandRunner,
+  createSafeCommandRunner,
+  REPAIR_EXECUTABLE_ALLOWLIST,
   type CommandRunnerOptions,
+  type SafeCommandRunnerConfig,
 } from './environment/command-runner.js';
 
 export {
@@ -174,6 +185,7 @@ export {
   runtimeDiagnosticRule,
   toolchainDiagnosticRule,
   containerDiagnosticRule,
+  dockerSecurityDiagnosticRule,
   dependencyDiagnosticRule,
   buildDiagnosticRule,
   projectDiagnosticRule,
@@ -187,6 +199,7 @@ export {
   createAuditLogger,
   createSnapshotManager,
   type RepairExecutionOptions,
+  type AuditQueryFilter,
 } from './repair/index.js';
 
 export {

@@ -1,0 +1,5 @@
+services:
+  web:
+    image: intranet.example.com/app:1.2.3
+    privileged: true
+    command: ["node", "server.js"]

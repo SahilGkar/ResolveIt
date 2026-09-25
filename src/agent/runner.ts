@@ -13,6 +13,7 @@ import {
 import { PermissionManagerImpl } from '../safety/permission.js';
 import { assertRunTransition, isTerminalRunState } from './run-state.js';
 import type { AgentRunState } from './run-state.js';
+import { createRunId } from '../safety/ids.js';
 import { observeWorkspace } from './observation.js';
 import type { AgentObservation } from './observation.js';
 import { analyzeObservation } from './analysis.js';
@@ -44,6 +45,7 @@ export interface PlanExecutor {
       dryRun: boolean;
       workspaceRoot: string;
       approvalCallback?: (action: RepairAction) => Promise<PermissionDecision>;
+      runId?: string;
     }
   ): Promise<{
     readonly results: ReadonlyArray<{ action: RepairAction; result: RepairResult }>;
@@ -185,7 +187,7 @@ export class AgentRunner {
 
   async run(options: AgentRunOptions): Promise<{ context: AgentRunContext; result: AgentRunResult }> {
     const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const runId = createRunId();
     const startedAt = new Date();
 
     let state: AgentRunState = 'idle';
@@ -375,6 +377,7 @@ export class AgentRunner {
           workspaceRoot: options.workspaceRoot,
           approvalCallback: (action) =>
             Promise.resolve<PermissionDecision>(approvedIds.has(action.id) ? 'allowed' : 'denied'),
+          runId,
         });
         for (const { action, result } of execution.results) {
           executedActions.push({

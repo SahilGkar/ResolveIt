@@ -1,0 +1,9 @@
+services:
+  api:
+    image: intranet.example.com/api:1.0.0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    build:
+      context: ./api
+    volumes:
+      - api-data:/data
+volumes:
+  api-data:

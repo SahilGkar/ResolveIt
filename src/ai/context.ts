@@ -10,6 +10,8 @@ import { InstallDependencyTool } from '../repair/tools/install-dependency.js';
 import { CreatePythonVenvTool } from '../repair/tools/create-python-venv.js';
 import type { AgentAnalysis, AgentObservation } from '../agent/index.js';
 import type { VerificationReport } from '../agent/index.js';
+import { SECURITY_LIMITS, truncateText } from '../safety/limits.js';
+import { redactSecrets } from '../safety/secrets.js';
 
 export const TOOL_PARAMETER_ALLOWLIST: Readonly<Record<string, ReadonlyArray<string>>> = {
   'create-file': ['path', 'content'],
@@ -57,15 +59,30 @@ export interface AIContextInput {
   readonly lastReport?: VerificationReport;
 }
 
+function summarizeEvidenceValue(value: unknown): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    return redactSecrets(truncateText(value, SECURITY_LIMITS.maxDiagnosticEvidenceChars));
+  }
+  try {
+    const serialized = JSON.stringify(value) ?? String(value);
+    return redactSecrets(truncateText(serialized, SECURITY_LIMITS.maxDiagnosticEvidenceChars));
+  } catch {
+    return '[unserializable evidence]';
+  }
+}
+
 function diagnosticEvidence(diagnostic: Diagnostic): { expected?: unknown; actual?: unknown } {
   let expected: unknown;
   let actual: unknown;
   for (const item of diagnostic.evidence) {
     if (item.expected !== undefined && expected === undefined) {
-      expected = item.expected;
+      expected = summarizeEvidenceValue(item.expected);
     }
     if (item.actual !== undefined && actual === undefined) {
-      actual = item.actual;
+      actual = summarizeEvidenceValue(item.actual);
     }
   }
   return { expected, actual };
@@ -107,21 +124,21 @@ export function buildAIPlanningContext(input: AIContextInput): AIPlanningContext
         name: requirement.name,
         ...(requirement.versionConstraint === undefined
           ? {}
-          : { versionConstraint: requirement.versionConstraint }),
+          : { versionConstraint: truncateText(requirement.versionConstraint, 256) }),
         sourceFile: requirement.sourceFile,
       }))
-    ),
-    diagnostics: analysis.blockingDiagnostics.map((diagnostic) => {
+    ).slice(0, SECURITY_LIMITS.maxContextRequirements),
+    diagnostics: analysis.blockingDiagnostics.slice(0, SECURITY_LIMITS.maxContextDiagnostics).map((diagnostic) => {
       const { expected, actual } = diagnosticEvidence(diagnostic);
       return {
         code: diagnostic.code,
         category: diagnostic.category,
         severity: diagnostic.severity,
-        title: diagnostic.title,
-        message: diagnostic.message,
+        title: truncateText(diagnostic.title, 500),
+        message: redactSecrets(truncateText(diagnostic.message, SECURITY_LIMITS.maxDiagnosticEvidenceChars)),
         ...(expected === undefined ? {} : { expected }),
         ...(actual === undefined ? {} : { actual }),
-        affectedFiles: diagnostic.affectedFiles ? [...diagnostic.affectedFiles] : [],
+        affectedFiles: diagnostic.affectedFiles ? [...diagnostic.affectedFiles].slice(0, 10) : [],
       };
     }),
     availableTools: describeAvailableTools(),

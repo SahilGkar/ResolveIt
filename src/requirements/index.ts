@@ -18,8 +18,10 @@ import {
 } from './parsers/index.js';
 import { MesonRequirementParser, ConanRequirementParser, VcpkgRequirementParser } from './parsers/native.js';
 import { assignProject, isManifestFile, normalizeRelativePath, requirementIdentity } from './projects.js';
+import { isEnvFile } from '../safety/secrets.js';
+import { SECURITY_LIMITS } from '../safety/limits.js';
 import { promises as fs } from 'fs';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 
 export interface RequirementScannerOptions {
   readonly timeout?: number;
@@ -65,16 +67,35 @@ export class RequirementManagerImpl implements IRequirementManager {
 
     const files = await this.findRelevantFiles(workspaceRoot);
     files.sort();
-    const markerDirs = this.markerDirectories(files);
+    const boundedFiles = files.slice(0, SECURITY_LIMITS.maxRequirementFiles);
+    const markerDirs = this.markerDirectories(boundedFiles);
     const contentCache = new Map<string, string>();
 
-    for (const filePath of files) {
+    for (const filePath of boundedFiles) {
+      if (isEnvFile(basename(filePath))) {
+        continue;
+      }
       const parser = this.getParserForFile(filePath);
       if (parser) {
         try {
           const fullPath = resolve(workspaceRoot, filePath);
           let content = contentCache.get(fullPath);
           if (content === undefined) {
+            const stats = await fs.stat(fullPath);
+            if (!stats.isFile() || stats.size > SECURITY_LIMITS.maxRequirementFileBytes) {
+              allResults.push({
+                projectId: 'unknown',
+                sourceFiles: [filePath],
+                requirements: [],
+                parseErrors: [{
+                  sourceFile: filePath,
+                  error: `Skipped file exceeding size limit (${SECURITY_LIMITS.maxRequirementFileBytes} bytes)`,
+                  code: 'FILE_TOO_LARGE',
+                  severity: 'warning',
+                }],
+              });
+              continue;
+            }
             content = await fs.readFile(fullPath, 'utf-8');
             contentCache.set(fullPath, content);
           }

@@ -1,8 +1,10 @@
 import { BaseRepairTool } from '../base-tool.js';
 import type { ValidationResult, RepairResult, RepairAction } from '../../core/models.js';
-import { spawn } from 'child_process';
+import { createSafeCommandRunner } from '../../environment/command-runner.js';
+import { SECURITY_LIMITS } from '../../safety/limits.js';
 
 const PYTHON_EXECUTABLE_PATTERN = /^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?$/;
+const VENV_TIMEOUT_MS = 120000;
 
 interface CreatePythonVenvParameters {
   readonly path: string;
@@ -30,10 +32,8 @@ export class CreatePythonVenvTool extends BaseRepairTool {
 
     if (!params.path || typeof params.path !== 'string') {
       errors.push('Missing or invalid path parameter');
-    }
-
-    if (params.path && params.path.includes('..')) {
-      errors.push('Path contains directory traversal');
+    } else if (params.path.length > SECURITY_LIMITS.maxPathLength) {
+      errors.push(`Path exceeds maximum length (${SECURITY_LIMITS.maxPathLength})`);
     }
 
     if (params.pythonExecutable !== undefined && params.pythonExecutable !== null) {
@@ -45,7 +45,7 @@ export class CreatePythonVenvTool extends BaseRepairTool {
     const rootResolution = this.resolveWorkspaceRoot(action, params);
     if (!rootResolution.ok) {
       errors.push(rootResolution.error);
-    } else if (params.path) {
+    } else if (params.path && typeof params.path === 'string') {
       const containment = this.validateWorkspacePath(rootResolution.root, params.path);
       for (const err of containment.errors) {
         if (!errors.includes(err)) {
@@ -75,7 +75,6 @@ export class CreatePythonVenvTool extends BaseRepairTool {
     const workspaceRoot = rootResolution.root;
 
     const pythonCmd = params.pythonExecutable || 'python';
-    const venvPath = this.resolveWorkspaceFile(workspaceRoot, params.path);
 
     if (dryRun) {
       return {
@@ -85,42 +84,37 @@ export class CreatePythonVenvTool extends BaseRepairTool {
       };
     }
 
-    return new Promise((resolve) => {
-      const child = spawn(pythonCmd, ['-m', 'venv', venvPath], {
-        cwd: workspaceRoot,
-        shell: process.platform === 'win32',
-        windowsHide: true,
-      });
+    const safe = await this.resolveSafeTarget(workspaceRoot, params.path);
+    if (!safe.ok) {
+      return { success: false, error: safe.error };
+    }
 
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      child.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            success: true,
-            output: `Created Python virtual environment at ${params.path}`,
-            modifiedFiles: [params.path],
-          });
-        } else {
-          resolve({
-            success: false,
-            error: `Failed to create venv (exit code ${code}): ${stderr || stdout}`,
-          });
-        }
-      });
-
-      child.on('error', (err) => {
-        resolve({ success: false, error: `Failed to execute command: ${err.message}` });
-      });
+    const runner = createSafeCommandRunner({
+      allowedExecutables: [pythonCmd],
+      allowedRoot: workspaceRoot,
+      defaultTimeoutMs: VENV_TIMEOUT_MS,
     });
+    const result = await runner.run(pythonCmd, ['-m', 'venv', safe.resolvedPath], {
+      cwd: workspaceRoot,
+      timeout: VENV_TIMEOUT_MS,
+    });
+
+    if (result.timedOut) {
+      return { success: false, error: `Command timed out after ${VENV_TIMEOUT_MS}ms: ${pythonCmd} -m venv` };
+    }
+    if (result.error) {
+      return { success: false, error: `Failed to execute command: ${result.error}` };
+    }
+    if (result.exitCode === 0) {
+      return {
+        success: true,
+        output: `Created Python virtual environment at ${params.path}`,
+        modifiedFiles: [params.path],
+      };
+    }
+    return {
+      success: false,
+      error: `Failed to create venv (exit code ${result.exitCode}): ${result.stderr || result.stdout || result.error || 'unknown error'}`,
+    };
   }
 }

@@ -1,12 +1,12 @@
-import type { 
-  RepairAction, 
-  RepairPlan, 
-  RepairToolRegistry, 
-  RepairResult, 
-  ValidationResult, 
-  Snapshot, 
-  AuditLogEntry, 
-  RiskLevel, 
+import type {
+  RepairAction,
+  RepairPlan,
+  RepairToolRegistry,
+  RepairResult,
+  ValidationResult,
+  Snapshot,
+  AuditLogEntry,
+  RiskLevel,
   PermissionDecision,
   PlanContext,
   Diagnostic} from '../core/models.js';
@@ -16,49 +16,31 @@ import { ModifyFileTool } from './tools/modify-file.js';
 import { InstallDependencyTool } from './tools/install-dependency.js';
 import { CreatePythonVenvTool } from './tools/create-python-venv.js';
 import { PermissionManagerImpl } from '../safety/permission.js';
+import { sanitizeParameters as sanitizeRecord, redactSecrets } from '../safety/secrets.js';
+import { SECURITY_LIMITS } from '../safety/limits.js';
+import { createActionId, createAuditId, createPlanId, createSnapshotId } from '../safety/ids.js';
 import { promises as fs } from 'fs';
 import { resolve } from 'path';
 
 const SNAPSHOT_DIR = '.resolveit/snapshots';
 const AUDIT_LOG_DIR = '.resolveit/audit';
 
-const SENSITIVE_PARAMETER_KEYS = new Set(
-  [
-    'password',
-    'passwd',
-    'secret',
-    'token',
-    'apikey',
-    'authorization',
-    'auth',
-    'privatekey',
-    'credential',
-    'credentials',
-  ].map((key) => key.toLowerCase()),
-);
-
-function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_PARAMETER_KEYS.has(key.toLowerCase().replace(/[_-]/g, ''));
+export function sanitizeParameters(parameters: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return sanitizeRecord(parameters);
 }
 
-export function sanitizeParameters(parameters: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(parameters)) {
-    if (isSensitiveKey(key)) {
-      sanitized[key] = '[REDACTED]';
-    } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      sanitized[key] = sanitizeParameters(value as Readonly<Record<string, unknown>>);
-    } else {
-      sanitized[key] = value;
-    }
+function sanitizeAuditError(error: string | undefined): string | undefined {
+  if (error === undefined) {
+    return undefined;
   }
-  return sanitized;
+  return redactSecrets(error);
 }
 
 export interface RepairExecutionOptions {
   readonly dryRun: boolean;
   readonly workspaceRoot: string;
   readonly approvalCallback?: (action: RepairAction) => Promise<PermissionDecision>;
+  readonly runId?: string;
 }
 
 export interface RepairExecutionResult {
@@ -67,18 +49,27 @@ export interface RepairExecutionResult {
   readonly success: boolean;
 }
 
+export interface AuditQueryFilter {
+  readonly startTime?: Date;
+  readonly endTime?: Date;
+  readonly actionId?: string;
+  readonly runId?: string;
+  readonly workspaceRoot?: string;
+  readonly limit?: number;
+}
+
 export class RepairPlannerImpl {
   createPlan(diagnostics: ReadonlyArray<Diagnostic>, context: PlanContext): Promise<RepairPlan> {
     const actions: RepairAction[] = [];
-     
+
     for (const diag of diagnostics) {
       if (diag.remediationCandidates && diag.remediationCandidates.length > 0) {
         for (const candidate of diag.remediationCandidates) {
           if (context.constraints.allowedActions.includes(candidate.type) &&
               this.riskLevelAllowed(candidate.riskLevel, context.constraints.maxRiskLevel)) {
-            
+
             const action: RepairAction = {
-              id: `action-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              id: createActionId(),
               type: candidate.type,
               permissionLevel: candidate.riskLevel,
               description: candidate.description,
@@ -94,7 +85,7 @@ export class RepairPlannerImpl {
               riskLevel: candidate.riskLevel,
               prerequisites: [],
             };
-            
+
             actions.push(action);
           }
         }
@@ -104,7 +95,7 @@ export class RepairPlannerImpl {
     this.getMaxRiskLevel(actions);
 
     return Promise.resolve({
-      id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: createPlanId(),
       name: `Repair plan for ${diagnostics.length} diagnostics`,
       description: `Generated plan to address ${diagnostics.length} diagnostics`,
       actions,
@@ -150,6 +141,54 @@ export class RepairPlannerImpl {
   }
 }
 
+function parseAuditRecord(raw: unknown): AuditLogEntry | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const id = record['id'];
+  const actionId = record['actionId'];
+  if (typeof id !== 'string' || typeof actionId !== 'string') {
+    return undefined;
+  }
+  const timestamp = new Date(String(record['timestamp']));
+  if (Number.isNaN(timestamp.getTime())) {
+    return undefined;
+  }
+  const parameters =
+    record['parameters'] !== null &&
+    typeof record['parameters'] === 'object' &&
+    !Array.isArray(record['parameters'])
+      ? sanitizeRecord(record['parameters'] as Readonly<Record<string, unknown>>)
+      : {};
+  const actionType = typeof record['actionType'] === 'string' ? record['actionType'] : 'custom';
+  const permissionLevel = typeof record['permissionLevel'] === 'string' ? record['permissionLevel'] : 'read-only';
+  const approvalState = typeof record['approvalState'] === 'string' ? record['approvalState'] : 'denied';
+  const target = record['target'] !== null && typeof record['target'] === 'object' ? record['target'] : {};
+  const executionResult =
+    record['executionResult'] === 'success' || record['executionResult'] === 'pending' ? record['executionResult'] : 'failure';
+  return {
+    id,
+    timestamp,
+    actionId,
+    actionType: actionType as AuditLogEntry['actionType'],
+    permissionLevel: permissionLevel as RiskLevel,
+    approvalState: approvalState as PermissionDecision,
+    target: target as AuditLogEntry['target'],
+    parameters,
+    affectedFiles: Array.isArray(record['affectedFiles'])
+      ? (record['affectedFiles'] as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    executionResult,
+    ...(typeof record['error'] === 'string' ? { error: sanitizeAuditError(record['error']) } : {}),
+    ...(typeof record['rollbackId'] === 'string' ? { rollbackId: record['rollbackId'] } : {}),
+    ...(typeof record['runId'] === 'string' ? { runId: record['runId'] } : {}),
+    ...(typeof record['workspaceRoot'] === 'string' ? { workspaceRoot: record['workspaceRoot'] } : {}),
+    ...(typeof record['projectId'] === 'string' ? { projectId: record['projectId'] } : {}),
+    ...(typeof record['reason'] === 'string' ? { reason: record['reason'] } : {}),
+  };
+}
+
 export class AuditLoggerImpl {
   private workspaceRoot: string;
 
@@ -160,19 +199,90 @@ export class AuditLoggerImpl {
   async log(entry: AuditLogEntry): Promise<void> {
     const logDir = resolve(this.workspaceRoot, AUDIT_LOG_DIR);
     await fs.mkdir(logDir, { recursive: true });
-    
+
     const logFile = resolve(logDir, `audit-${new Date().toISOString().split('T')[0]}.jsonl`);
-    const line = JSON.stringify({
+    const sanitized: AuditLogEntry = {
       ...entry,
-      timestamp: entry.timestamp.toISOString(),
+      parameters: sanitizeRecord(entry.parameters),
+      error: sanitizeAuditError(entry.error),
+    };
+    const line = JSON.stringify({
+      ...sanitized,
+      timestamp: sanitized.timestamp.toISOString(),
     }) + '\n';
-    
+
     await fs.appendFile(logFile, line, 'utf-8');
   }
 
-  query(_query: { startTime?: Date; endTime?: Date; actionId?: string; limit?: number }): Promise<ReadonlyArray<AuditLogEntry>> {
-    // Simplified implementation - in practice would read from log files
-    return Promise.resolve([]);
+  async query(filter: AuditQueryFilter = {}): Promise<ReadonlyArray<AuditLogEntry>> {
+    const logDir = resolve(this.workspaceRoot, AUDIT_LOG_DIR);
+    let files: string[];
+    try {
+      files = (await fs.readdir(logDir))
+        .filter((name) => name.startsWith('audit-') && name.endsWith('.jsonl'))
+        .sort();
+    } catch {
+      return [];
+    }
+
+    const limit = Math.min(filter.limit ?? SECURITY_LIMITS.maxAuditQueryResults, SECURITY_LIMITS.maxAuditQueryResults);
+    const entries: AuditLogEntry[] = [];
+    let bytesRead = 0;
+
+    for (const file of files) {
+      let content: string;
+      try {
+        content = await fs.readFile(resolve(logDir, file), 'utf-8');
+      } catch {
+        continue;
+      }
+      bytesRead += content.length;
+      if (bytesRead > SECURITY_LIMITS.maxAuditFileBytes) {
+        break;
+      }
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          continue;
+        }
+        let raw: unknown;
+        try {
+          raw = JSON.parse(trimmed) as unknown;
+        } catch {
+          continue;
+        }
+        const entry = parseAuditRecord(raw);
+        if (!entry) {
+          continue;
+        }
+        if (filter.actionId !== undefined && entry.actionId !== filter.actionId) {
+          continue;
+        }
+        if (filter.runId !== undefined && entry.runId !== filter.runId) {
+          continue;
+        }
+        if (filter.workspaceRoot !== undefined && entry.workspaceRoot !== filter.workspaceRoot) {
+          continue;
+        }
+        if (filter.startTime !== undefined && entry.timestamp < filter.startTime) {
+          continue;
+        }
+        if (filter.endTime !== undefined && entry.timestamp > filter.endTime) {
+          continue;
+        }
+        entries.push(entry);
+      }
+    }
+
+    entries.sort((a, b) => {
+      const timeDiff = a.timestamp.getTime() - b.timestamp.getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    return entries.slice(0, limit);
   }
 }
 
@@ -186,10 +296,10 @@ export class SnapshotManager {
   async createSnapshot(actionId: string, files: ReadonlyArray<string>): Promise<Snapshot> {
     const snapshotDir = resolve(this.workspaceRoot, SNAPSHOT_DIR);
     await fs.mkdir(snapshotDir, { recursive: true });
-    
-    const snapshotId = `snapshot-${actionId}-${Date.now()}`;
+
+    const snapshotId = createSnapshotId(actionId);
     const snapshotFiles: Array<{ filePath: string; content: string; timestamp: Date }> = [];
-    
+
     for (const file of files) {
       try {
         const fullPath = resolve(this.workspaceRoot, file);
@@ -199,17 +309,17 @@ export class SnapshotManager {
         // File doesn't exist yet, that's fine
       }
     }
-    
+
     const snapshot: Snapshot = {
       id: snapshotId,
       actionId,
       files: snapshotFiles,
       createdAt: new Date(),
     };
-    
+
     const snapshotFile = resolve(snapshotDir, `${snapshotId}.json`);
     await fs.writeFile(snapshotFile, JSON.stringify(snapshot, null, 2), 'utf-8');
-    
+
     return snapshot;
   }
 
@@ -219,12 +329,12 @@ export class SnapshotManager {
       const snapshotFile = resolve(snapshotDir, `${snapshotId}.json`);
       const content = await fs.readFile(snapshotFile, 'utf-8');
       const snapshot = JSON.parse(content) as Snapshot;
-      
+
       for (const file of snapshot.files) {
         const fullPath = resolve(this.workspaceRoot, file.filePath);
         await fs.writeFile(fullPath, file.content, 'utf-8');
       }
-      
+
       return true;
     } catch {
       return false;
@@ -279,7 +389,7 @@ export class RepairExecutor {
 
     for (const action of plan.actions) {
       let decision: PermissionDecision;
-      
+
       if (options.approvalCallback) {
         decision = await options.approvalCallback(action);
       } else {
@@ -288,16 +398,20 @@ export class RepairExecutor {
       }
 
       await auditLogger.log({
-        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        id: createAuditId(),
         timestamp: new Date(),
         actionId: action.id,
         actionType: action.type,
         permissionLevel: action.permissionLevel,
         approvalState: decision,
         target: action.target,
-        parameters: sanitizeParameters(action.parameters),
+        parameters: sanitizeRecord(action.parameters),
         affectedFiles: action.affectedFiles || [],
         executionResult: decision === 'allowed' ? 'pending' : 'failure',
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        workspaceRoot: effectiveRoot,
+        ...(action.target.projectId === undefined ? {} : { projectId: action.target.projectId }),
+        reason: decision === 'allowed' ? 'Approval granted; queued for execution' : 'Approval not granted; action skipped',
       });
 
       if (decision !== 'allowed') {
@@ -334,18 +448,22 @@ export class RepairExecutor {
       }
 
       await auditLogger.log({
-        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        id: createAuditId(),
         timestamp: new Date(),
         actionId: action.id,
         actionType: action.type,
         permissionLevel: action.permissionLevel,
         approvalState: 'allowed',
         target: action.target,
-        parameters: sanitizeParameters(action.parameters),
+        parameters: sanitizeRecord(action.parameters),
         affectedFiles: action.affectedFiles || [],
         executionResult: result.success ? 'success' : 'failure',
-        error: result.error,
+        error: sanitizeAuditError(result.error),
         rollbackId: result.rollbackData ? `rollback-${action.id}` : undefined,
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        workspaceRoot: effectiveRoot,
+        ...(action.target.projectId === undefined ? {} : { projectId: action.target.projectId }),
+        reason: result.success ? 'Tool execution succeeded' : 'Tool execution failed',
       });
     }
 

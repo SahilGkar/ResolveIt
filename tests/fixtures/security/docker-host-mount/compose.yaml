@@ -1,0 +1,6 @@
+services:
+  backup:
+    image: intranet.example.com/backup:0.9.0
+    volumes:
+      - /:/host
+      - ./data:/data

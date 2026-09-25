@@ -1,12 +1,13 @@
 import type { Diagnostic } from '../core/models.js';
 import type { DiagnosticRule, VersionMatcher, DiagnosticContext } from '../core/interfaces.js';
 import { DiagnosticEngineImpl, createDiagnosticEngine, versionMatcher } from './diagnostic-engine.js';
-import { 
-  runtimeDiagnosticRule, 
-  toolchainDiagnosticRule, 
-  containerDiagnosticRule, 
-  dependencyDiagnosticRule, 
-  buildDiagnosticRule, 
+import {
+  runtimeDiagnosticRule,
+  toolchainDiagnosticRule,
+  containerDiagnosticRule,
+  dockerSecurityDiagnosticRule,
+  dependencyDiagnosticRule,
+  buildDiagnosticRule,
   projectDiagnosticRule,
   crossProjectDiagnosticRule
 } from './rules/index.js';
@@ -140,13 +141,14 @@ export function diagnosticsToJSON(diagnostics: ReadonlyArray<Diagnostic>): strin
   }, null, 2);
 }
 
-export { 
-  DiagnosticEngineImpl, 
-  createDiagnosticEngine, 
+export {
+  DiagnosticEngineImpl,
+  createDiagnosticEngine,
   versionMatcher,
   runtimeDiagnosticRule,
   toolchainDiagnosticRule,
   containerDiagnosticRule,
+  dockerSecurityDiagnosticRule,
   dependencyDiagnosticRule,
   buildDiagnosticRule,
   projectDiagnosticRule,

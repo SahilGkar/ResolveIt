@@ -1,5 +1,8 @@
 import type { AIPlanningResult, AIProposedAction } from '../core/models.js';
 import { AIProviderError } from './errors.js';
+import { SECURITY_LIMITS, byteLength } from '../safety/limits.js';
+
+const MAX_PARSE_ACTIONS = 32;
 
 function stripMarkdownFences(text: string): string {
   const trimmed = text.trim();
@@ -19,6 +22,13 @@ export function parseAIPlanningResponse(text: string): AIPlanningResult {
     throw new AIProviderError('empty', 'AI provider returned an empty response');
   }
 
+  if (byteLength(text) > SECURITY_LIMITS.maxAiResponseBytes) {
+    throw new AIProviderError(
+      'oversized',
+      `AI provider response exceeds maximum size (${SECURITY_LIMITS.maxAiResponseBytes} bytes)`
+    );
+  }
+
   const payload = stripMarkdownFences(text);
   let parsed: unknown;
   try {
@@ -35,9 +45,19 @@ export function parseAIPlanningResponse(text: string): AIPlanningResult {
   if (typeof summary !== 'string' || summary.trim() === '') {
     throw new AIProviderError('malformed', 'AI provider response is missing a summary');
   }
+  if (summary.length > 8192) {
+    throw new AIProviderError('oversized', 'AI provider summary exceeds maximum length');
+  }
 
   if (!Array.isArray(parsed['actions'])) {
     throw new AIProviderError('malformed', 'AI provider response is missing an actions array');
+  }
+
+  if (parsed['actions'].length > MAX_PARSE_ACTIONS) {
+    throw new AIProviderError(
+      'oversized',
+      `AI provider proposed too many actions (${parsed['actions'].length} > ${MAX_PARSE_ACTIONS})`
+    );
   }
 
   const actions: AIProposedAction[] = [];
@@ -48,13 +68,16 @@ export function parseAIPlanningResponse(text: string): AIPlanningResult {
     if (!isRecord(entry['parameters'])) {
       throw new AIProviderError('malformed', `AI action ${entry['type']} is missing a parameters object`);
     }
+    if (byteLength(JSON.stringify(entry['parameters'])) > SECURITY_LIMITS.maxAiParameterBytes * 4) {
+      throw new AIProviderError('oversized', `AI action ${entry['type']} parameters exceed maximum size`);
+    }
     const action: AIProposedAction = {
       type: entry['type'].trim(),
       parameters: entry['parameters'],
     };
     actions.push(
       typeof entry['rationale'] === 'string' && entry['rationale'].trim() !== ''
-        ? { ...action, rationale: entry['rationale'].trim() }
+        ? { ...action, rationale: entry['rationale'].trim().slice(0, 2000) }
         : action
     );
   }
@@ -65,7 +88,7 @@ export function parseAIPlanningResponse(text: string): AIPlanningResult {
   };
 
   if (typeof parsed['reasoning'] === 'string' && parsed['reasoning'].trim() !== '') {
-    return { ...result, reasoning: parsed['reasoning'].trim() };
+    return { ...result, reasoning: parsed['reasoning'].trim().slice(0, 8192) };
   }
 
   if (typeof parsed['confidence'] === 'number') {

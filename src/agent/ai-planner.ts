@@ -6,6 +6,7 @@ import { isAIProviderError } from '../ai/errors.js';
 import { createDeterministicRepairPlanner, actionFingerprint } from './deterministic-planner.js';
 import type { DeterministicPlan } from './deterministic-planner.js';
 import type { PlannerFn } from './runner.js';
+import { createPlanId } from '../safety/ids.js';
 
 export interface AIPlannerCallbacks {
   readonly onFallback?: (reason: string, details?: string) => void;
@@ -90,7 +91,7 @@ export function createAIPlanner(
     }
 
     const plan: RepairPlan = {
-      id: `plan-ai-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: createPlanId(),
       name: `AI-assisted repair plan (${provider.name})`,
       description: generated.summary,
       actions,

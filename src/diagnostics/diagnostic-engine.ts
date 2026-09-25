@@ -11,12 +11,13 @@ import type {
   DiagnosticCategory 
 } from '../core/interfaces.js';
 import { versionMatcher } from './version-matcher.js';
-import { 
-  runtimeDiagnosticRule, 
-  toolchainDiagnosticRule, 
-  containerDiagnosticRule, 
-  dependencyDiagnosticRule, 
-  buildDiagnosticRule, 
+import {
+  runtimeDiagnosticRule,
+  toolchainDiagnosticRule,
+  containerDiagnosticRule,
+  dockerSecurityDiagnosticRule,
+  dependencyDiagnosticRule,
+  buildDiagnosticRule,
   projectDiagnosticRule,
   crossProjectDiagnosticRule
 } from './rules/index.js';
@@ -74,6 +75,7 @@ export class DiagnosticEngineImpl implements DiagnosticEngine {
     this.registerRule(runtimeDiagnosticRule);
     this.registerRule(toolchainDiagnosticRule);
     this.registerRule(containerDiagnosticRule);
+    this.registerRule(dockerSecurityDiagnosticRule);
     this.registerRule(dependencyDiagnosticRule);
     this.registerRule(buildDiagnosticRule);
     this.registerRule(projectDiagnosticRule);

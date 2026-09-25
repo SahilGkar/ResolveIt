@@ -7,6 +7,7 @@ export type AIErrorCode =
   | 'rate-limit'
   | 'malformed'
   | 'empty'
+  | 'oversized'
   | 'refusal'
   | 'invalid';
 

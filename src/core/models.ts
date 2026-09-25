@@ -337,6 +337,10 @@ export interface AuditLogEntry {
   readonly executionResult: 'success' | 'failure' | 'pending';
   readonly error?: string;
   readonly rollbackId?: string;
+  readonly runId?: string;
+  readonly workspaceRoot?: string;
+  readonly projectId?: string;
+  readonly reason?: string;
 }
 
 export interface RepairPlan {

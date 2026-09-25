@@ -1,6 +1,7 @@
 import { BaseRepairTool } from '../base-tool.js';
 import type { ValidationResult, RepairResult, RepairAction } from '../../core/models.js';
-import { spawn } from 'child_process';
+import { createSafeCommandRunner } from '../../environment/command-runner.js';
+import { SECURITY_LIMITS } from '../../safety/limits.js';
 
 interface InstallDependencyParameters {
   readonly ecosystem: 'npm' | 'pip' | 'cargo' | 'go' | 'composer' | 'bundler';
@@ -13,6 +14,7 @@ interface InstallDependencyParameters {
 const NPM_PACKAGE_PATTERN = /^(?:@[a-z0-9~][a-z0-9~._-]*\/)?[a-z0-9~][a-z0-9~._-]*$/;
 const GENERIC_PACKAGE_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?(?:\[[A-Za-z0-9_,.-]+\])?$/;
 const VERSION_PATTERN = /^[A-Za-z0-9_.\-+~^<>=!*|,\s:]+$/;
+const SHELL_METACHAR_PATTERN = /[;&|$`"'\n\r()<>!*?~#\\]/;
 
 const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd: string; args: (params: InstallDependencyParameters) => string[] }> = {
   npm: {
@@ -72,6 +74,8 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
   },
 };
 
+const INSTALL_TIMEOUT_MS = 120000;
+
 export class InstallDependencyTool extends BaseRepairTool {
   constructor() {
     super(
@@ -110,8 +114,25 @@ export class InstallDependencyTool extends BaseRepairTool {
       }
     }
 
-    if (params.workspaceRoot && params.workspaceRoot.includes('..')) {
-      errors.push('Workspace root contains directory traversal');
+    if (params.developmentOnly !== undefined && typeof params.developmentOnly !== 'boolean') {
+      errors.push('Invalid developmentOnly parameter: must be a boolean');
+    }
+
+    if (typeof params.workspaceRoot === 'string') {
+      if (params.workspaceRoot.includes('\0')) {
+        errors.push('Workspace root contains NUL byte');
+      } else if (params.workspaceRoot.includes('..')) {
+        errors.push('Workspace root contains directory traversal');
+      }
+    }
+
+    for (const [key, value] of Object.entries(params)) {
+      if (key === 'workspaceRoot' || key === 'package' || key === 'version') {
+        continue;
+      }
+      if (typeof value === 'string' && SHELL_METACHAR_PATTERN.test(value)) {
+        errors.push(`Invalid characters in parameter ${key}`);
+      }
     }
 
     if (errors.length > 0) {
@@ -125,8 +146,20 @@ export class InstallDependencyTool extends BaseRepairTool {
     if (packageName.trim() === '') {
       return 'Missing or invalid package parameter';
     }
+    if (packageName.length > SECURITY_LIMITS.maxPackageNameLength) {
+      return `Invalid package name: exceeds maximum length (${SECURITY_LIMITS.maxPackageNameLength})`;
+    }
+    if (packageName.startsWith('-')) {
+      return `Invalid package name (possible flag injection): ${packageName}`;
+    }
+    if (SHELL_METACHAR_PATTERN.test(packageName)) {
+      return `Invalid package name (possible command injection): ${packageName}`;
+    }
     if (/\s/.test(packageName)) {
       return `Invalid package name (possible command injection): ${packageName}`;
+    }
+    if (packageName.includes('..')) {
+      return `Invalid package name (possible path traversal): ${packageName}`;
     }
     const pattern = ecosystem === 'npm' ? NPM_PACKAGE_PATTERN : GENERIC_PACKAGE_PATTERN;
     if (!pattern.test(packageName)) {
@@ -139,7 +172,10 @@ export class InstallDependencyTool extends BaseRepairTool {
     if (typeof version !== 'string' || version.trim() === '') {
       return 'Invalid version parameter';
     }
-    if (/[;&|$`"'\n\r]/.test(version)) {
+    if (version.length > SECURITY_LIMITS.maxVersionLength) {
+      return `Invalid version: exceeds maximum length (${SECURITY_LIMITS.maxVersionLength})`;
+    }
+    if (SHELL_METACHAR_PATTERN.test(version)) {
       return `Invalid version (possible command injection): ${version}`;
     }
     if (!VERSION_PATTERN.test(version)) {
@@ -172,42 +208,28 @@ export class InstallDependencyTool extends BaseRepairTool {
       };
     }
 
-    return new Promise((resolve) => {
-      const child = spawn(ecosystemDef.cmd, args, {
-        cwd: workspaceRoot,
-        shell: process.platform === 'win32',
-        windowsHide: true,
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      child.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            success: true,
-            output: stdout,
-            modifiedFiles: [],
-          });
-        } else {
-          resolve({
-            success: false,
-            error: `Command failed with exit code ${code}: ${stderr || stdout}`,
-          });
-        }
-      });
-
-      child.on('error', (err) => {
-        resolve({ success: false, error: `Failed to execute command: ${err.message}` });
-      });
+    const runner = createSafeCommandRunner({
+      allowedExecutables: [ecosystemDef.cmd],
+      allowedRoot: workspaceRoot,
+      defaultTimeoutMs: INSTALL_TIMEOUT_MS,
     });
+    const result = await runner.run(ecosystemDef.cmd, args, {
+      cwd: workspaceRoot,
+      timeout: INSTALL_TIMEOUT_MS,
+    });
+
+    if (result.timedOut) {
+      return { success: false, error: `Command timed out after ${INSTALL_TIMEOUT_MS}ms: ${ecosystemDef.cmd}` };
+    }
+    if (result.error) {
+      return { success: false, error: `Failed to execute command: ${result.error}` };
+    }
+    if (result.exitCode === 0) {
+      return { success: true, output: result.stdout, modifiedFiles: [] };
+    }
+    return {
+      success: false,
+      error: `Command failed with exit code ${result.exitCode}: ${result.stderr || result.stdout || result.error || 'unknown error'}`,
+    };
   }
 }

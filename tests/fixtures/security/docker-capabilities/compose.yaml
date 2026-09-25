@@ -1,0 +1,7 @@
+services:
+  debug:
+    image: intranet.example.com/debug:7.8.9
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    ipc: host
