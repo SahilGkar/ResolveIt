@@ -6,6 +6,13 @@ export interface Project {
   readonly manifest: Manifest;
   readonly dependencies: ReadonlyArray<Dependency>;
   readonly languages: ReadonlyArray<Language>;
+  readonly projectRoot: string;
+  readonly markers: ReadonlyArray<ProjectMarker>;
+  readonly configFiles: ReadonlyArray<ConfigFile>;
+  readonly sourceFiles: ReadonlyArray<SourceFile>;
+  readonly testFiles: ReadonlyArray<SourceFile>;
+  readonly documentationFiles: ReadonlyArray<SourceFile>;
+  readonly otherFiles: ReadonlyArray<SourceFile>;
 }
 
 export type ProjectType =
@@ -99,6 +106,13 @@ export interface Workspace {
   readonly rootPath: string;
   readonly projects: ReadonlyArray<Project>;
   readonly environments: ReadonlyArray<Environment>;
+  readonly allFiles: ReadonlyArray<SourceFile>;
+  readonly allDirectories: ReadonlyArray<DirectoryInfo>;
+  readonly languages: ReadonlyArray<Language>;
+  readonly projectMarkers: ReadonlyArray<ProjectMarker>;
+  readonly configFiles: ReadonlyArray<ConfigFile>;
+  readonly repoIndicators: ReadonlyArray<RepoIndicator>;
+  readonly errors: ReadonlyArray<ScanError>;
 }
 
 export interface Environment {
@@ -312,4 +326,106 @@ export interface PlanConstraints {
   readonly allowedActions: ReadonlyArray<RepairActionType>;
   readonly maxDuration?: number;
   readonly requireApproval: boolean;
+}
+
+export interface SourceFile {
+  readonly relativePath: string;
+  readonly name: string;
+  readonly extension: string;
+  readonly size: number;
+  readonly language?: string;
+  readonly classification: SourceClassification;
+}
+
+export type SourceClassification =
+  | 'source'
+  | 'test'
+  | 'configuration'
+  | 'documentation'
+  | 'generated'
+  | 'ignored'
+  | 'unknown';
+
+export interface DirectoryInfo {
+  readonly relativePath: string;
+  readonly name: string;
+  readonly fileCount: number;
+  readonly subdirectoryCount: number;
+}
+
+export interface ProjectMarker {
+  readonly type: ProjectMarkerType;
+  readonly path: string;
+  readonly format: string;
+}
+
+export type ProjectMarkerType =
+  | 'package-json'
+  | 'requirements-txt'
+  | 'pyproject-toml'
+  | 'setup-py'
+  | 'setup-cfg'
+  | 'pom-xml'
+  | 'build-gradle'
+  | 'cargo-toml'
+  | 'go-mod'
+  | 'cmake-lists'
+  | 'makefile'
+  | 'dockerfile'
+  | 'docker-compose'
+  | 'tsconfig-json'
+  | 'sln'
+  | 'csproj'
+  | 'gemfile'
+  | 'composer-json'
+  | 'pubspec-yaml'
+  | 'package-swift'
+  | 'unknown';
+
+export interface ConfigFile {
+  readonly type: ConfigFileType;
+  readonly path: string;
+  readonly format: string;
+}
+
+export type ConfigFileType =
+  | 'gitignore'
+  | 'env'
+  | 'env-example'
+  | 'readme'
+  | 'license'
+  | 'editorconfig'
+  | 'prettierrc'
+  | 'eslintrc'
+  | 'tsconfig'
+  | 'babelrc'
+  | 'webpack-config'
+  | 'vite-config'
+  | 'jest-config'
+  | 'pytest-ini'
+  | 'tox-ini'
+  | 'mypy-ini'
+  | 'ci-config'
+  | 'unknown';
+
+export interface RepoIndicator {
+  readonly type: RepoIndicatorType;
+  readonly path: string;
+}
+
+export type RepoIndicatorType =
+  | 'git'
+  | 'gitignore'
+  | 'github-workflows'
+  | 'gitlab-ci'
+  | 'jenkinsfile'
+  | 'circleci'
+  | 'travis'
+  | 'azure-pipelines'
+  | 'unknown';
+
+export interface ScanError {
+  readonly path: string;
+  readonly error: string;
+  readonly code: string;
 }

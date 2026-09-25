@@ -27,6 +27,16 @@ export {
   RepairActionType,
   ToolCapability,
   AgentLifecycleStage,
+  SourceFile,
+  DirectoryInfo,
+  ProjectMarker,
+  ConfigFile,
+  RepoIndicator,
+  ScanError,
+  SourceClassification,
+  ProjectMarkerType,
+  ConfigFileType,
+  RepoIndicatorType,
 } from './core/models.js';
 
 export {
@@ -67,3 +77,6 @@ export { NoAIProvider, AIProviderConfig, LocalAIConfig, ExternalAIConfig, create
 export { DEFAULT_PERMISSION_POLICY, getActionRiskLevel, checkPermission, PermissionManagerImpl } from './safety/permission.js';
 
 export { AGENT_LIFECYCLE_STAGES, LIFECYCLE_TRANSITIONS, canTransition, createInitialAgentState, updateAgentState, transitionAgentState, AgentEngine, SimpleAgentEngine } from './agent/lifecycle.js';
+
+export { scanWorkspace, type ScannerOptions } from './scanners/index.js';
+export { WorkspaceManagerImpl, createWorkspaceManager } from './core/workspace-manager.js';

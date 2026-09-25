@@ -1,4 +1,4 @@
-import {
+import type {
   Project,
   Workspace,
   Environment,
@@ -20,6 +20,16 @@ import {
   PlanConstraints,
   RootCause,
   EnvironmentSnapshot,
+  SourceFile,
+  DirectoryInfo,
+  ProjectMarker,
+  ConfigFile,
+  RepoIndicator,
+  ScanError,
+  SourceClassification,
+  ProjectMarkerType,
+  ConfigFileType,
+  RepoIndicatorType,
 } from './models.js';
 
 export type {
@@ -44,6 +54,16 @@ export type {
   PlanConstraints,
   RootCause,
   EnvironmentSnapshot,
+  SourceFile,
+  DirectoryInfo,
+  ProjectMarker,
+  ConfigFile,
+  RepoIndicator,
+  ScanError,
+  SourceClassification,
+  ProjectMarkerType,
+  ConfigFileType,
+  RepoIndicatorType,
 };
 
 export interface WorkspaceManager {

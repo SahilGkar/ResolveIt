@@ -1,5 +1,5 @@
-import { RepairAction, RiskLevel, PermissionDecision, PermissionPolicy, ApprovalResult } from '../core/interfaces.js';
-import { RepairActionType } from '../core/models.js';
+import type { RepairAction, RiskLevel, PermissionDecision, PermissionPolicy, ApprovalResult } from '../core/interfaces.js';
+import type { RepairActionType } from '../core/models.js';
 
 export const DEFAULT_PERMISSION_POLICY: PermissionPolicy = {
   readOnlyActions: [
@@ -94,7 +94,7 @@ export class PermissionManagerImpl {
     return decision;
   }
 
-  async requestApproval(action: RepairAction, reason: string): Promise<ApprovalResult> {
+  requestApproval(action: RepairAction, reason: string): ApprovalResult {
     const decision = this.checkPermission(action);
     
     if (decision === 'allowed') {

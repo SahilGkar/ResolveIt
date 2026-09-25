@@ -1,32 +1,32 @@
-import { AIProvider, AgentEvidence, DiagnosisResult, PlanContext, RepairPlan } from '../core/interfaces.js';
+import type { AIProvider, AgentEvidence, DiagnosisResult, PlanContext, RepairPlan } from '../core/interfaces.js';
 
 export class NoAIProvider implements AIProvider {
   readonly type = 'none' as const;
   readonly name = 'No AI Provider';
   readonly version = '0.0.1';
 
-  async isAvailable(): Promise<boolean> {
-    return true;
+  isAvailable(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
-  async diagnose(evidence: AgentEvidence): Promise<DiagnosisResult> {
-    return {
+  diagnose(_evidence: AgentEvidence): Promise<DiagnosisResult> {
+    return Promise.resolve({
       id: `diagnosis-${Date.now()}`,
       summary: 'No AI provider available. Deterministic diagnostics only.',
       rootCauses: [],
       confidence: 0,
       timestamp: new Date(),
-    };
+    });
   }
 
-  async planRepair(diagnosis: DiagnosisResult, context: PlanContext): Promise<RepairPlan> {
-    return {
+  planRepair(_diagnosis: DiagnosisResult, _context: PlanContext): Promise<RepairPlan> {
+    return Promise.resolve({
       id: `plan-${Date.now()}`,
       name: 'No AI Plan',
       description: 'No AI provider available. Manual repair required.',
       actions: [],
       requiresApproval: false,
-    };
+    });
   }
 }
 

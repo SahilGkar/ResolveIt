@@ -1,4 +1,4 @@
-import { Agent, AgentState, AgentLifecycleStage, AgentEvidence, DiagnosisResult, PlanContext, RepairPlan, VerificationResult, ApprovalResult, Workspace } from '../core/interfaces.js';
+import type { Agent, AgentState, AgentLifecycleStage, Workspace } from '../core/interfaces.js';
 
 export const AGENT_LIFECYCLE_STAGES: ReadonlyArray<AgentLifecycleStage> = [
   'observe',
@@ -68,7 +68,7 @@ export interface AgentEngine {
 export class SimpleAgentEngine implements AgentEngine {
   private agents: Map<string, Agent> = new Map();
 
-  createAgent(id: string, name: string): Agent {
+  createAgent(id: string, _name: string): Agent {
     if (this.agents.has(id)) {
       throw new Error(`Agent with id ${id} already exists`);
     }
