@@ -37,6 +37,10 @@ export {
   ProjectMarkerType,
   ConfigFileType,
   RepoIndicatorType,
+  ToolInstallation,
+  EnvironmentInfo,
+  OSInfo,
+  ContainerInfo,
 } from './core/models.js';
 
 export {
@@ -80,3 +84,45 @@ export { AGENT_LIFECYCLE_STAGES, LIFECYCLE_TRANSITIONS, canTransition, createIni
 
 export { scanWorkspace, type ScannerOptions } from './scanners/index.js';
 export { WorkspaceManagerImpl, createWorkspaceManager } from './core/workspace-manager.js';
+
+export {
+  scanEnvironment,
+  createEnvironmentScanner,
+  createMockEnvironmentScanner,
+  formatEnvironmentSummary,
+  environmentInfoToJSON,
+  type EnvironmentScannerOptions,
+} from './environment/index.js';
+
+export {
+  detectOS,
+  formatOSInfo,
+} from './environment/adapters/os.js';
+
+export {
+  detectAllRuntimes,
+  RUNTIME_DEFINITIONS,
+} from './environment/adapters/runtime.js';
+
+export {
+  detectAllDevTools,
+  type ToolDefinition,
+  DEV_TOOL_DEFINITIONS,
+} from './environment/adapters/tools.js';
+
+export {
+  detectAllPackageManagers,
+  type PackageManagerDefinition,
+  PACKAGE_MANAGER_DEFINITIONS,
+} from './environment/adapters/package-managers.js';
+
+export {
+  detectContainers,
+} from './environment/adapters/containers.js';
+
+export {
+  CommandRunner,
+  createCommandRunner,
+  createMockCommandRunner,
+  type CommandRunnerOptions,
+} from './environment/command-runner.js';

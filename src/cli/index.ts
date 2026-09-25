@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { version } from '../version.js';
 import { scanWorkspace } from '../scanners/index.js';
+import { scanEnvironment, environmentInfoToJSON, formatEnvironmentSummary } from '../environment/index.js';
 import type { Workspace, Language, ProjectMarker } from '../core/models.js';
 
 export const program = new Command();
@@ -43,6 +44,26 @@ program
         console.log(JSON.stringify(result, null, 2));
       } else {
         printSummary(result);
+      }
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('environment')
+  .description('Inspect the current development environment')
+  .option('-j, --json', 'Output as JSON')
+  .option('-t, --timeout <number>', 'Timeout in milliseconds', '30000')
+  .action(async (options: { json: boolean; timeout: string }) => {
+    try {
+      const result = await scanEnvironment({ timeout: parseInt(options.timeout, 10) });
+      
+      if (options.json) {
+        console.log(environmentInfoToJSON(result));
+      } else {
+        console.log(formatEnvironmentSummary(result));
       }
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

@@ -429,3 +429,40 @@ export interface ScanError {
   readonly error: string;
   readonly code: string;
 }
+
+export interface ToolInstallation {
+  readonly name: string;
+  readonly command: string;
+  readonly version?: string;
+  readonly path?: string;
+  readonly available: boolean;
+  readonly source?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface EnvironmentInfo {
+  readonly os: OSInfo;
+  readonly runtimes: ReadonlyArray<ToolInstallation>;
+  readonly devTools: ReadonlyArray<ToolInstallation>;
+  readonly packageManagers: ReadonlyArray<ToolInstallation>;
+  readonly containers: ContainerInfo;
+  readonly environmentVariables: Readonly<Record<string, string>>;
+  readonly scannedAt: Date;
+}
+
+export interface OSInfo {
+  readonly platform: NodeJS.Platform;
+  readonly architecture: string;
+  readonly hostname: string;
+  readonly release?: string;
+  readonly version?: string;
+  readonly type?: string;
+  readonly shell?: string;
+}
+
+export interface ContainerInfo {
+  readonly docker: ToolInstallation;
+  readonly dockerCompose: ToolInstallation;
+  readonly dockerRunning: boolean;
+  readonly dockerInfo?: Readonly<Record<string, unknown>>;
+}
