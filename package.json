@@ -1,0 +1,42 @@
+{
+  "name": "resolveit",
+  "version": "0.0.1",
+  "description": "Language-agnostic IDE-integrated project environment diagnosis and resolution system",
+  "main": "dist/cli.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "resolveit": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "cli": "node dist/cli.js"
+  },
+  "keywords": [
+    "diagnostics",
+    "repair",
+    "environment",
+    "ide",
+    "language-agnostic"
+  ],
+  "author": "ResolveIt Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.55.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
+  }
+}
