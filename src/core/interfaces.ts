@@ -30,6 +30,17 @@ import type {
   ProjectMarkerType,
   ConfigFileType,
   RepoIndicatorType,
+  ProjectRequirement,
+  ProjectRequirementType,
+  ParsedRequirements,
+  RequirementParseError,
+  VersionConstraint,
+  VersionOperator,
+  DependencyManifest,
+  ParsedDependency,
+  RuntimeRequirement,
+  ToolchainRequirement,
+  ContainerRequirement,
 } from './models.js';
 
 export type {
@@ -64,6 +75,17 @@ export type {
   ProjectMarkerType,
   ConfigFileType,
   RepoIndicatorType,
+  ProjectRequirement,
+  ProjectRequirementType,
+  ParsedRequirements,
+  RequirementParseError,
+  VersionConstraint,
+  VersionOperator,
+  DependencyManifest,
+  ParsedDependency,
+  RuntimeRequirement,
+  ToolchainRequirement,
+  ContainerRequirement,
 };
 
 export interface WorkspaceManager {
@@ -296,4 +318,19 @@ export interface ToolRegistry {
   getToolsByCapability(capability: string): ReadonlyArray<Tool>;
   getAllTools(): ReadonlyArray<Tool>;
   findToolForAction(actionType: string): Tool | undefined;
+}
+
+// Phase 3: Requirement Intelligence interfaces
+export interface RequirementParser {
+  readonly ecosystem: string;
+  readonly supportedFormats: ReadonlyArray<string>;
+  
+  parse(sourceFile: string, content: string): ParsedRequirements;
+  canParse(fileName: string): boolean;
+}
+
+export interface RequirementManager {
+  discoverRequirements(workspaceRoot: string): Promise<ReadonlyArray<ParsedRequirements>>;
+  getRequirements(projectId: string): ReadonlyArray<ProjectRequirement>;
+  registerParser(parser: RequirementParser): void;
 }

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { version } from '../version.js';
 import { scanWorkspace } from '../scanners/index.js';
 import { scanEnvironment, environmentInfoToJSON, formatEnvironmentSummary } from '../environment/index.js';
+import { scanRequirements, reqInfoToJSON, formatRequirementsSummary } from '../requirements/index.js';
 import type { Workspace, Language, ProjectMarker } from '../core/models.js';
 
 export const program = new Command();
@@ -64,6 +65,27 @@ program
         console.log(environmentInfoToJSON(result));
       } else {
         console.log(formatEnvironmentSummary(result));
+      }
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('requirements')
+  .description('Inspect project requirements and dependencies')
+  .option('-j, --json', 'Output as JSON')
+  .option('-t, --timeout <number>', 'Timeout in milliseconds', '60000')
+  .option('-p, --path <path>', 'Workspace path', '.')
+  .action(async (options: { json: boolean; timeout: string; path: string }) => {
+    try {
+      const result = await scanRequirements(options.path, { timeout: parseInt(options.timeout, 10) });
+      
+      if (options.json) {
+        console.log(reqInfoToJSON(result));
+      } else {
+        console.log(formatRequirementsSummary(result));
       }
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

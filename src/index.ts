@@ -41,6 +41,17 @@ export {
   EnvironmentInfo,
   OSInfo,
   ContainerInfo,
+  ProjectRequirement,
+  ProjectRequirementType,
+  ParsedRequirements,
+  RequirementParseError,
+  VersionConstraint,
+  VersionOperator,
+  DependencyManifest,
+  ParsedDependency,
+  RuntimeRequirement,
+  ToolchainRequirement,
+  ContainerRequirement,
 } from './core/models.js';
 
 export {
@@ -74,6 +85,8 @@ export {
   PlanConstraints,
   RootCause,
   EnvironmentSnapshot,
+  RequirementParser,
+  RequirementManager,
 } from './core/interfaces.js';
 
 export { NoAIProvider, AIProviderConfig, LocalAIConfig, ExternalAIConfig, createAIProvider, AIProviderType } from './ai/providers.js';
@@ -126,3 +139,9 @@ export {
   createMockCommandRunner,
   type CommandRunnerOptions,
 } from './environment/command-runner.js';
+
+export {
+  scanRequirements,
+  createRequirementManager,
+  type RequirementScannerOptions,
+} from './requirements/index.js';

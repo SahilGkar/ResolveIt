@@ -466,3 +466,103 @@ export interface ContainerInfo {
   readonly dockerRunning: boolean;
   readonly dockerInfo?: Readonly<Record<string, unknown>>;
 }
+
+// Phase 3: Requirement & Dependency Intelligence types
+export interface ProjectRequirement {
+  readonly id: string;
+  readonly ecosystem: string;
+  readonly type: ProjectRequirementType;
+  readonly name: string;
+  readonly versionConstraint?: string;
+  readonly rawConstraint?: string;
+  readonly sourceFile: string;
+  readonly sourceSection?: string;
+  readonly optional?: boolean;
+  readonly developmentOnly?: boolean;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export type ProjectRequirementType =
+  | 'runtime-version'
+  | 'language-version'
+  | 'package-dependency'
+  | 'package-manager'
+  | 'toolchain'
+  | 'container-image'
+  | 'system-tool'
+  | 'build-tool'
+  | 'custom';
+
+export interface ParsedRequirements {
+  readonly projectId: string;
+  readonly sourceFiles: ReadonlyArray<string>;
+  readonly requirements: ReadonlyArray<ProjectRequirement>;
+  readonly parseErrors: ReadonlyArray<RequirementParseError>;
+}
+
+export interface RequirementParseError {
+  readonly sourceFile: string;
+  readonly error: string;
+  readonly code: string;
+  readonly severity: 'error' | 'warning';
+}
+
+export interface VersionConstraint {
+  readonly operator: VersionOperator;
+  readonly version: string;
+  readonly raw: string;
+}
+
+export type VersionOperator =
+  | '=='
+  | '!='
+  | '>'
+  | '>='
+  | '<'
+  | '<='
+  | '~'
+  | '~='
+  | '^'
+  | '*'
+  | 'none';
+
+export interface DependencyManifest {
+  readonly path: string;
+  readonly format: ManifestFormat;
+  readonly content: Readonly<Record<string, unknown>>;
+  readonly parsedDependencies: ReadonlyArray<ParsedDependency>;
+  readonly parseErrors: ReadonlyArray<RequirementParseError>;
+}
+
+export interface ParsedDependency {
+  readonly name: string;
+  readonly versionConstraint: string;
+  readonly rawConstraint: string;
+  readonly scope?: DependencyScope;
+  readonly optional: boolean;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface RuntimeRequirement {
+  readonly language: string;
+  readonly versionConstraint: string;
+  readonly rawConstraint: string;
+  readonly sourceFile: string;
+  readonly sourceSection?: string;
+}
+
+export interface ToolchainRequirement {
+  readonly tool: string;
+  readonly versionConstraint?: string;
+  readonly rawConstraint?: string;
+  readonly sourceFile: string;
+  readonly sourceSection?: string;
+}
+
+export interface ContainerRequirement {
+  readonly image: string;
+  readonly tag?: string;
+  readonly sourceFile: string;
+  readonly sourceSection?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
