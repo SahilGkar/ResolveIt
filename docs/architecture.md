@@ -254,6 +254,112 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 6 Status (Implemented): Verification & Agent Loop
+
+### Lifecycle
+
+```text
+idle
+  → observing      (workspace/environment/requirement scan)
+  → analyzing      (deterministic diagnostics; no blockers → resolved)
+  → planning       (deterministic plan from blocking diagnostics)
+  → awaiting-approval   (dry-run and manual plans stop here or after)
+  → acting         (approved actions via Phase 5 RepairExecutor)
+  → verifying      (re-observe, re-diagnose, targeted checks)
+  → resolved | replanning | failed
+replanning → analyzing → planning ...
+```
+
+### State machine (`src/agent/run-state.ts`)
+
+Explicit `AgentRunState` model (`idle`, `observing`, `analyzing`, `planning`,
+`awaiting-approval`, `acting`, `verifying`, `resolved`, `replanning`, `failed`) with a
+guarded transition table (`AGENT_RUN_TRANSITIONS`, `assertRunTransition` rejects arbitrary
+jumps). `toLifecycleStage` maps each run state onto the Phase 0 `AgentLifecycleStage`
+(`src/agent/lifecycle.ts` is preserved unchanged).
+
+### Observation (`src/agent/observation.ts`)
+
+`observeWorkspace` reuses Phase 1–3 services (`scanWorkspace`, `scanEnvironment`,
+`scanRequirements`) and returns a structured `AgentObservation`
+(workspace, environment, requirements, timestamp). No scanner duplication.
+
+### Analysis (`src/agent/analysis.ts`)
+
+`analyzeObservation` runs the existing deterministic Diagnostic Engine over the
+observation — no new diagnostic rules. Blocking diagnostics are `error`/`critical`
+severity; a run with none resolves immediately. `diagnosticKey` provides stable,
+re-runnable identity (category/code/requirement/file, never random ids).
+
+### Planning (`src/agent/deterministic-planner.ts`)
+
+`DeterministicRepairPlanner` maps blocking diagnostics to controlled actions, gated by
+the real Phase 5 tool validators (an action is only planned if its tool accepts it):
+- `package-dependency` with a supported ecosystem (node→npm, python→pip, rust→cargo,
+  go→go, php→composer, ruby→bundler) → `install-dependency`
+- `MISSING_REQUIRED_FILE` with a safe `{path, content}` payload → file creation
+- `MISSING_PYTHON_VENV` with a safe `{path}` payload → venv creation
+- `CONFIG_VALUE_MISMATCH` with a safe `{path, find, replace}` payload → file modification
+- runtime/toolchain/build/container diagnostics → system-level manual action
+- anything unknown → project-level manual action (`manual_action_required` semantics)
+
+Planning never executes anything. Duplicate candidates are deduplicated.
+
+### Approval boundary (`src/agent/runner.ts`)
+
+The runner stops at `awaiting-approval` before executing. Dry runs terminate there.
+Otherwise an approval callback supplies approved action ids (default: deny all).
+Read-only actions auto-approved by policy may proceed; project/system modifications
+require explicit approval through the Phase 5 `PermissionManager` — the agent never
+approves its own plan. Zero approvals with executable actions fails as
+`approval-denied`; executable-free plans with manual actions finish as
+`manual-action-required` with an explanation.
+
+### Action execution
+
+The runner uses the existing Phase 5 `RepairExecutor` (no second execution mechanism),
+records per-action success/failure/denial, audit data, and snapshot information, and
+stores sanitized copies (see below).
+
+### Verification (`src/agent/verifier.ts`)
+
+`VerificationEngineImpl` implements the Phase 0 `VerificationEngine` interface
+(`verify`, `registerVerificationRule`) and adds `verifyPlan`:
+- Diagnostic re-run: compares blocking diagnostic keys before/after (resolved vs
+  persisting vs new regressions).
+- Targeted checks (filesystem only, no shell): created file exists with expected
+  content, modified file contains the replacement, venv directory exists, installer
+  outcome recorded with its no-inventory limitation stated.
+- Custom `VerificationRule`s run per action and AND into the result.
+Success requires zero remaining blocking diagnostics and zero failed targeted checks —
+exit codes alone never imply success.
+
+### Re-planning and loop prevention
+
+Failed verification re-observes and re-analyzes (new evidence feeds the next plan),
+up to `maxIterations` (default 3, `DEFAULT_MAX_ITERATIONS`), then `failed` with the
+verification summary. `actionFingerprint` (stable hash of type/target/parameters,
+excluding workspace root) tracks failed actions per run; the planner skips
+already-failed fingerprints so identical unsuccessful actions are never repeated.
+
+### Run context and events
+
+`AgentRunContext` tracks run id, workspace, state, observations, analyses, plans,
+approvals, executed actions, verification reports, failed fingerprints, iteration
+count, timestamps, and the event trail. Stored observations/analyses/plans use
+`sanitizeParameters` (environment variable values and remediation payloads redacted);
+`.env` contents are never read. Structured `AgentEvent`s
+(`observation-started`, …, `plan-created`, `approval-requested/granted/denied`,
+`action-started/completed/failed`, `verification-started/completed`, `replanning`,
+`resolved`, `failed`) are emitted via callback for future UI integration.
+
+### CLI
+
+`resolveit run [-p <path>] [--dry-run] [--json] [--approve <action-id>]` runs the
+deterministic lifecycle without AI. Dry run observes, analyzes, plans, shows required
+permissions, and stops before modifications. Normal execution still requires explicit
+`--approve` per action id.
+
 ## Phase 5 Status (Implemented)
 
 - Repair tool registry with validating-tool selection (`src/repair/registry.ts`)
@@ -272,4 +378,5 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
   for `.cmd` shims); inputs are allowlist-validated but execution still depends on host tools.
 - Snapshots cover file content only (no manifest/dependency-state rollback).
 - `AuditLoggerImpl.query` is a stub returning no results.
-- The executor has no retry/re-plan loop; failed verification re-planning belongs to Phase 6.
+- The deterministic agent loop retries up to `maxIterations` (default 3); beyond that,
+  unresolved runs fail with an explanation rather than retrying indefinitely.

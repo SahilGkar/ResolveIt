@@ -173,3 +173,28 @@ export {
   createSnapshotManager,
   type RepairExecutionOptions,
 } from './repair/index.js';
+
+export {
+  AGENT_RUN_STATES,
+  AGENT_RUN_TRANSITIONS,
+  canTransitionRunState,
+  assertRunTransition,
+  isTerminalRunState,
+  toLifecycleStage,
+  observeWorkspace,
+  analyzeObservation,
+  isBlockingDiagnostic,
+  diagnosticKey,
+  DeterministicRepairPlanner,
+  createDeterministicRepairPlanner,
+  actionFingerprint,
+  MISSING_REQUIRED_FILE_CODE,
+  MISSING_PYTHON_VENV_CODE,
+  CONFIG_VALUE_MISMATCH_CODE,
+  VerificationEngineImpl,
+  createVerificationEngine,
+  targetedCheck,
+  AgentRunner,
+  createAgentRunner,
+  DEFAULT_MAX_ITERATIONS,
+} from './agent/index.js';

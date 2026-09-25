@@ -6,6 +6,8 @@ import { scanRequirements, reqInfoToJSON, formatRequirementsSummary } from '../r
 import { diagnose, formatDiagnosticsSummary, diagnosticsToJSON } from '../diagnostics/index.js';
 import type { RepairExecutionOptions } from '../repair/index.js';
 import { createRepairExecutor, createRepairPlanner } from '../repair/index.js';
+import { createAgentRunner } from '../agent/index.js';
+import type { AgentRunResult } from '../agent/index.js';
 import type { Workspace, Language, ProjectMarker, RepairPlan, RepairAction } from '../core/models.js';
 
 export const program = new Command();
@@ -293,6 +295,88 @@ program
   .action(async (options: { json: boolean; dryRun: boolean; path: string; approve?: string }) => {
     try {
       await executeRepair(options.path, options);
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+function printAgentResult(result: AgentRunResult): void {
+  console.log(`Agent Run: ${result.runId}`);
+  console.log(`Status: ${result.status}`);
+  if (result.reason) {
+    console.log(`Reason: ${result.reason}`);
+  }
+  console.log(`Iterations: ${result.iterations}`);
+  if (result.remainingDiagnostics.length > 0) {
+    console.log(`Remaining diagnostics: ${result.remainingDiagnostics.length}`);
+  }
+  if (result.manualActions.length > 0) {
+    console.log(`Manual actions required:`);
+    for (const manual of result.manualActions) {
+      console.log(`  - ${manual.description} (${manual.reason})`);
+    }
+  }
+  for (const report of result.verificationReports) {
+    console.log(`Verification: ${report.success ? 'SUCCESS' : 'FAILED'} - ${report.summary}`);
+  }
+}
+
+async function executeAgentRun(
+  workspaceRoot: string,
+  options: { dryRun: boolean; json: boolean; approve?: string }
+): Promise<void> {
+  const runner = createAgentRunner();
+
+  const approvalCallback = (plan: RepairPlan, _manual: ReadonlyArray<{ description: string }>): Promise<ReadonlyArray<string>> => {
+    const approved: string[] = [];
+    for (const action of plan.actions) {
+      if (options.approve && options.approve === action.id) {
+        approved.push(action.id);
+        continue;
+      }
+      console.log(`\nAction requires approval:`);
+      console.log(`  ID: ${action.id}`);
+      console.log(`  Type: ${action.type}`);
+      console.log(`  Description: ${action.description}`);
+      console.log(`  Permission: ${action.permissionLevel}`);
+      console.log(`\nTo approve this action, run: resolveit run --approve ${action.id}`);
+    }
+    return Promise.resolve(approved);
+  };
+
+  const { result } = await runner.run({
+    workspaceRoot,
+    dryRun: options.dryRun,
+    approvalCallback,
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    printAgentResult(result);
+  }
+
+  if (options.dryRun) {
+    console.log('\nDRY RUN - No actions were executed');
+    return;
+  }
+
+  if (result.status !== 'resolved') {
+    process.exit(1);
+  }
+}
+
+program
+  .command('run')
+  .description('Run the deterministic agent lifecycle (observe, analyze, plan, approve, act, verify)')
+  .option('-j, --json', 'Output as JSON')
+  .option('-d, --dry-run', 'Observe, analyze and plan without executing')
+  .option('-p, --path <path>', 'Workspace path', '.')
+  .option('--approve <action-id>', 'Approve a specific action by ID')
+  .action(async (options: { json: boolean; dryRun: boolean; path: string; approve?: string }) => {
+    try {
+      await executeAgentRun(options.path, options);
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
