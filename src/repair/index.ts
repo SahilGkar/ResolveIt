@@ -440,7 +440,15 @@ export class RepairExecutor {
         await snapshotManager.createSnapshot(action.id, action.affectedFiles);
       }
 
-      const result = await tool.execute(action, options.dryRun);
+      let result: RepairResult;
+      try {
+        result = await tool.execute(action, options.dryRun);
+      } catch (err) {
+        result = {
+          success: false,
+          error: `Tool ${tool.name} threw an error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
       results.push({ action, result });
 
       if (!result.success) {

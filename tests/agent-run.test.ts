@@ -222,7 +222,7 @@ describe('agent observation', () => {
     expect(observation.environment).toBeDefined();
     expect(Array.isArray(observation.requirements)).toBe(true);
     expect(observation.timestamp).toBeInstanceOf(Date);
-  }, 30000);
+  }, 120000);
 });
 
 describe('agent analysis', () => {

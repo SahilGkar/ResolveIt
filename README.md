@@ -52,9 +52,16 @@ Agent Engine
 
 ## Status
 
-Phase 8: VS Code Extension (current)
+Phase 12: Final release validation (complete). All 12 phases implemented:
 
-Deterministic core (Phases 1–6) works fully without AI. AI planning is optional.
+0. Architecture · 1. Workspace/project discovery · 2. Environment intelligence ·
+3. Requirement intelligence · 4. Diagnostic engine · 5. Repair & permission system ·
+6. Verification & agent loop · 7. AI provider abstraction · 8. VS Code extension ·
+9. Extension↔Core hardening · 10. Multi-ecosystem hardening ·
+11. Security, Docker & audit hardening · 12. Final integration & release validation.
+
+Deterministic core works fully without AI. AI planning is optional with
+deterministic fallback.
 
 ## AI Configuration
 
@@ -117,19 +124,69 @@ npm run build
 npm test
 ```
 
+## Repair approval and safety model
+
+```text
+Workspace → discovery → environment → requirements → diagnostics → plan
+  → explicit user approval → controlled repair → verification → resolved
+```
+
+- Every project/system-changing action requires explicit user approval
+  (per-action `Allow`/`Deny`; denied actions never execute).
+- Repairs run only through registered, allowlisted tools with validated,
+  structured arguments. There is no generic shell-execution repair path.
+- File writes are contained to the approved workspace (canonical path checks,
+  symlink fail-closed); dry-run mode performs no modifications.
+- AI output is untrusted data: only known tools with allowlisted parameters
+  are accepted, permission levels come from the tool, and fully-rejected AI
+  output falls back to deterministic planning.
+- Secrets (`.env` contents, API keys, tokens) are never sent to AI providers
+  and are redacted from logs, audit records, errors, and UI output.
+- Every repair is followed by verification; success is reported only when
+  verification passes (`approved ≠ executed ≠ succeeded ≠ verified`).
+- Audit records correlate run → plan → approval → execution → verification.
+
+## Supported ecosystems
+
+Python, Node (npm/yarn/pnpm/bun manifests), Java (Maven/Gradle), Go, Rust,
+C/C++ (CMake/Make/Meson/Conan/vcpkg), .NET, Ruby, PHP, Docker/Compose —
+via static manifest analysis. Dependency status without a local inventory is
+reported honestly as `unknown` (informational), never invented.
+
+## Current limitations
+
+- No dependency version solver; locked/transitive entries get manual guidance.
+- Runtime/toolchain gaps produce manual remediation paths, not silent installs.
+- No sudo/elevation automation; system changes stay explicitly manual.
+- Docker analysis is diagnostic-only (never starts or modifies containers).
+- Multi-root VS Code workspaces analyze the first folder only.
+- Core operations are not abortable; cancellation detaches the UI and discards
+  late results.
+- Linux/macOS behavior is covered by unit tests; manual validation was
+  performed on Windows.
+
 ## Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Run tests
+# Run tests (core)
 npm test
 
-# Build
+# Build / typecheck / lint
 npm run build
+npx tsc --noEmit
+npm run lint
 
 # CLI
-npx resolveit --help
-npx resolveit --version
+node dist/cli/index.js --help
+node dist/cli/index.js scan <workspace>
+
+# VS Code extension (isolated deps, mocked-vscode tests, packaging check)
+cd vscode
+npm install
+npm test
+npm run build
+npm run validate-package
 ```

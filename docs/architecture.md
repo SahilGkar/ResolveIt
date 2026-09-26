@@ -254,6 +254,51 @@ No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The i
 - Docker/database/web UI
 - Any autonomous behavior
 
+## Phase 12 Status (Implemented): Final Integration & Release Validation
+
+Phase 12 added no new subsystem. It validated the composed product, fixed the
+integration defects found, and left the repository shippable:
+
+- **Release matrix** (`tests/fixtures/integration/`, `tests/integration-release.test.ts`):
+  healthy fixtures for Node/Python/Go/Rust/Java/C++ (zero blocking
+  diagnostics under a controlled environment, deterministic planner proposes
+  nothing), broken fixtures (runtime mismatch → blocking error with evidence
+  and a manual remediation path; malformed manifest → parse-error diagnostic;
+  privileged/socket Compose → critical diagnostic-only findings; secret project
+  → no leakage into requirements, diagnostics, or audit), multi-project and
+  nested fixtures (boundaries, requirement ownership, no double counting,
+  stable ordering).
+- **Truthfulness**: denied → not performed/not resolved; failed validation →
+  recorded failure; approved + verified → resolved; approved but persisting →
+  verification failure, never false success. Covered with real planner,
+  executor, and verifier components.
+- **Determinism**: repeated runs are byte-identical after normalizing
+  ephemeral ids/timestamps (absolute workspace roots are test-harness paths,
+  not product nondeterminism). Ephemeral `Date.now()` parser/diagnostic ids
+  were deliberately kept: they never feed correlation, caching, or UI state.
+- **Failure injection**: AI timeout/unavailable/malformed/hostile transport
+  (mocked fetch for both local and external providers) → deterministic
+  fallback, never bypass; throwing repair tool → recorded failure plus audit
+  entry (executor now guards `tool.execute` — the one robustness fix of this
+  phase); vanished workspace → failed with a useful error; concurrent runs
+  stay independent (distinct runIds).
+- **Agent loop**: illegal transitions rejected, max iterations enforced,
+  failed-action fingerprints prevent repeat planning, events ordered.
+- **Release fixes**: `package.json` entry points corrected (`main`,
+  `bin.resolveit`, and the `cli` script pointed at non-existent
+  `dist/cli.js`; the real entry is `dist/cli/index.js`), so the published
+  binary actually launches.
+- **Validation performed**: full core + extension suites green, CLI
+  walkthrough (scan/environment/requirements/diagnose/run/repair/ai, human
+  and JSON, missing-workspace error path, secret-project leak check), real
+  VSIX packaging with `vsce` (manifest + readme + 393 KiB bundle only) plus
+  install/list/uninstall round-trip against VS Code 1.138.0. Interactive GUI
+  operation was not performed (no display automation available); the
+  headless suite (73 tests incl. lifecycle, concurrency, approval, error
+  taxonomy, packaging parity) plus the bundle activation smoke test is the
+  strongest available substitute. Manual validation was performed on Windows;
+  Linux/macOS rest on unit coverage.
+
 ## Phase 11 Status (Implemented): Security, Docker & Audit Hardening
 
 Phase 11 makes ResolveIt conservative, auditable, and difficult to misuse. It

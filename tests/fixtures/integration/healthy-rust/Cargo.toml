@@ -1,0 +1,7 @@
+[package]
+name = "healthy-rust"
+version = "0.1.0"
+rust-version = "1.75"
+
+[dependencies]
+serde = "1"

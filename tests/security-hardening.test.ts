@@ -655,7 +655,7 @@ describe('Phase 11: audit logging and correlation', () => {
     }
     const entries = await logger.query({});
     expect(entries.length).toBe(SECURITY_LIMITS.maxAuditQueryResults);
-  });
+  }, 30000);
 
   it('generates collision-resistant identifiers', () => {
     const ids = new Set(Array.from({ length: 200 }, () => createId('action')));

@@ -1,0 +1,6 @@
+services:
+  risky:
+    image: intranet.example.com/risky:3.0.0
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
