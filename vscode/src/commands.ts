@@ -52,6 +52,9 @@ export interface CommandContext {
   readonly getAIConfig: () => AIConfig;
   readonly getMaxIterations: () => number;
   readonly openFile: (absolutePath: string) => Promise<void>;
+  readonly revealView?: (viewId: string) => void;
+  readonly openSettings?: (query: string) => void;
+  readonly showOutput?: () => void;
 }
 
 function requireRoot(ctx: CommandContext): string | undefined {
@@ -107,8 +110,8 @@ async function describeEnvironment(ctx: CommandContext): Promise<void> {
   );
 }
 
-export function createCommandHandlers(ctx: CommandContext): Record<string, () => Promise<void>> {
-  const handlers: Record<string, () => Promise<void>> = {};
+export function createCommandHandlers(ctx: CommandContext): Record<string, (...args: Array<unknown>) => Promise<void>> {
+  const handlers: Record<string, (...args: Array<unknown>) => Promise<void>> = {};
 
   const guarded = (kind: OperationKind, task: (root: string, token: OperationToken) => Promise<void>) => {
     return async (): Promise<void> => {
@@ -139,11 +142,18 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
 
   handlers['resolveit.diagnose'] = guarded('diagnose', async (root, token) => {
     ctx.status.showBusy('diagnosing', 'ResolveIt: running diagnostics');
+    ctx.state.setActiveOperation({ kind: 'diagnose', activity: 'Running diagnostics…' });
+    ctx.refreshViews();
     const diagnostics = await ctx.core.diagnoseProject(root);
     if (!ensureFresh(ctx, root, token)) {
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
       return;
     }
+    ctx.state.setActiveOperation(undefined);
     ctx.state.setDiagnostics(diagnostics);
+    ctx.state.markScanned();
+    ctx.state.clearLastError();
     const blocking = ctx.state.blockingCount();
     ctx.logger.info(`Diagnostics for ${root}: ${diagnostics.length} total, ${blocking} blocking.`);
     ctx.status.showIssues(diagnostics.length, blocking);
@@ -175,6 +185,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
 
   handlers['resolveit.repair'] = guarded('repair', async (root, token) => {
     ctx.status.showBusy('planning repairs', 'ResolveIt: planning repairs');
+    ctx.state.setActiveOperation({ kind: 'analyze', activity: 'Planning repairs…' });
+    ctx.refreshViews();
     const { plan, diagnostics } = await ctx.core.planRepairs(root);
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
@@ -198,18 +210,26 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
       ctx.logger.warn(`Workspace changed during repair approval; discarding plan for ${root}.`);
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
       return;
     }
     if (approved.length === 0) {
       ctx.messages.info('ResolveIt: no actions approved; nothing was executed.');
       ctx.status.showIssues(diagnostics.length, ctx.state.blockingCount());
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
       return;
     }
     ctx.status.showBusy('applying repairs', 'ResolveIt: applying repairs');
+    ctx.state.setActiveOperation({ kind: 'repair', activity: 'Applying approved repairs…' });
+    ctx.refreshViews();
     const execution = await ctx.core.executeApproved(root, plan, approved);
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
       ctx.logger.warn(`Workspace changed during repair execution; discarding results for ${root}.`);
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
       return;
     }
     const succeeded = execution.results.filter((entry) => entry.result.success);
@@ -222,12 +242,17 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
       ctx.messages.error(classified.userMessage);
       ctx.logger.error(classified.logDetail);
     }
+    ctx.state.setActiveOperation({ kind: 'verify', activity: 'Verifying changes…' });
+    ctx.refreshViews();
     const verification = await ctx.core.verifyAgainstPrevious(root, diagnostics);
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
       ctx.logger.warn(`Workspace changed during repair verification; discarding results for ${root}.`);
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
       return;
     }
+    ctx.state.setActiveOperation(undefined);
     ctx.state.setLastVerification({ resolved: verification.resolved, remaining: verification.remaining, timestamp: new Date() });
     ctx.state.setDiagnostics(verification.current);
     ctx.logger.info(`Verification: ${verification.resolved.length} resolved, ${verification.remaining.length} remaining.`);
@@ -244,9 +269,13 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
 
   handlers['resolveit.verify'] = guarded('verify', async (root, token) => {
     ctx.status.showBusy('verifying', 'ResolveIt: verifying');
+    ctx.state.setActiveOperation({ kind: 'verify', activity: 'Verifying project…' });
+    ctx.refreshViews();
     const previous = ctx.state.getDiagnostics();
     const verification = await ctx.core.verifyAgainstPrevious(root, previous);
+    ctx.state.setActiveOperation(undefined);
     if (!ensureFresh(ctx, root, token)) {
+      ctx.refreshViews();
       return;
     }
     ctx.state.setLastVerification({ resolved: verification.resolved, remaining: verification.remaining, timestamp: new Date() });
@@ -275,6 +304,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
     try {
       await ctx.coordinator.run('run', root, async (token) => {
         ctx.state.clearRunHistory();
+        ctx.state.setActiveOperation({ kind: 'run', activity: 'Running ResolveIt agent…' });
+        ctx.refreshViews();
         await ctx.reportCancellable('ResolveIt Run', async (report, cancelToken) => {
           cancelToken.onCancellationRequested(() => {
             ctx.coordinator.cancel('run', root);
@@ -325,12 +356,273 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, () =>
             ctx.refreshViews();
           } finally {
             scope.close();
+            ctx.state.setActiveOperation(undefined);
+            ctx.refreshViews();
           }
         });
       });
     } catch (error) {
       reportClassified(ctx, classifyError(error, 'ResolveIt run'), 'ResolveIt: run failed');
     }
+  };
+
+  handlers['resolveit.analyzeProject'] = guarded('analyze', async (root, token) => {
+    ctx.state.clearLastError();
+    const phase = (activity: string): void => {
+      ctx.state.setActiveOperation({ kind: 'analyze', activity });
+      ctx.status.showBusy(activity.toLowerCase().replace(/…$/, ''), `ResolveIt: ${activity.toLowerCase()}`);
+      ctx.refreshViews();
+    };
+    try {
+      phase('Discovering project…');
+      const workspace = await ctx.core.scanProject(root);
+      if (!ensureFresh(ctx, root, token)) {
+        return;
+      }
+      const first = workspace.projects[0];
+      ctx.state.setProjectName(first ? first.name : '(no projects)');
+      phase('Checking environment…');
+      await describeEnvironment(ctx);
+      token.throwIfCancelled();
+      if (!ensureFresh(ctx, root, token)) {
+        return;
+      }
+      phase('Reading requirements…');
+      const requirements = await ctx.core.projectRequirements(root);
+      token.throwIfCancelled();
+      if (!ensureFresh(ctx, root, token)) {
+        return;
+      }
+      ctx.state.setRequirements(requirements);
+      phase('Running diagnostics…');
+      const diagnostics = await ctx.core.diagnoseProject(root);
+      if (!ensureFresh(ctx, root, token)) {
+        return;
+      }
+      ctx.state.setDiagnostics(diagnostics);
+      ctx.state.markScanned();
+      const blocking = ctx.state.blockingCount();
+      ctx.logger.info(
+        `Analyze ${root}: ${workspace.projects.length} project(s), ${diagnostics.length} diagnostic(s), ${blocking} blocking.`
+      );
+      if (blocking === 0) {
+        ctx.messages.info('ResolveIt: project looks healthy. No blocking diagnostics found.');
+      } else {
+        ctx.messages.info(`ResolveIt: found ${blocking} blocking issue${blocking === 1 ? '' : 's'}. Review them in the dashboard.`);
+      }
+      ctx.status.showIssues(diagnostics.length, blocking);
+    } finally {
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
+    }
+  });
+
+  handlers['resolveit.generateRepairPlan'] = guarded('repair', async (root, token) => {
+    if (!ctx.state.getHasScanned()) {
+      ctx.messages.info('ResolveIt: analyze the project first, then generate a repair plan.');
+      return;
+    }
+    ctx.state.clearLastError();
+    ctx.state.setActiveOperation({ kind: 'analyze', activity: 'Generating repair plan…' });
+    ctx.status.showBusy('planning repairs', 'ResolveIt: generating repair plan');
+    ctx.refreshViews();
+    try {
+      const { plan, diagnostics } = await ctx.core.planRepairs(root);
+      token.throwIfCancelled();
+      if (!ctx.workspaces.isCurrent(root)) {
+        ctx.logger.warn(`Workspace changed during repair planning; discarding plan for ${root}.`);
+        return;
+      }
+      ctx.state.setDiagnostics(diagnostics);
+      ctx.state.markScanned();
+      if (plan.actions.length === 0) {
+        ctx.state.clearRepairPlan();
+        ctx.messages.info('ResolveIt found no automated repairs. Manual action may be required.');
+        ctx.logger.info('Repair planning produced no executable actions.');
+        ctx.status.showIssues(diagnostics.length, ctx.state.blockingCount());
+        return;
+      }
+      ctx.state.setRepairPlan(plan, plan.description);
+      ctx.logger.info(`Repair plan (${planSummary(plan)}): ${plan.description}`);
+      for (const action of plan.actions) {
+        for (const line of actionLines(action)) {
+          ctx.logger.info(`  ${line}`);
+        }
+      }
+      ctx.messages.info(
+        `Repair plan ready: ResolveIt wants to make ${plan.actions.length} change${plan.actions.length === 1 ? '' : 's'}. Review each change in the dashboard before anything is modified.`
+      );
+      ctx.revealView?.('resolveit.dashboard');
+    } finally {
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
+    }
+  });
+
+  const recordDecision = (approved: boolean) => {
+    return async (...args: Array<unknown>): Promise<void> => {
+      const actionId = typeof args[0] === 'string' ? args[0] : undefined;
+      const plan = ctx.state.getRepairPlan();
+      if (!plan) {
+        ctx.messages.info('ResolveIt: no repair plan available. Generate a repair plan first.');
+        return;
+      }
+      if (!actionId) {
+        ctx.messages.info('ResolveIt: open the dashboard to review each proposed repair.');
+        ctx.revealView?.('resolveit.dashboard');
+        return;
+      }
+      if (!plan.actions.some((action) => action.id === actionId)) {
+        ctx.messages.warn('ResolveIt: that repair action is not part of the current plan. Stale decisions were ignored.');
+        ctx.logger.warn(`Approval request for unknown action ${actionId}; ignoring.`);
+        return;
+      }
+      ctx.state.setApproval(actionId, approved);
+      ctx.state.clearLastError();
+      ctx.logger.info(`Repair action ${actionId}: ${approved ? 'approved' : 'skipped'} by user.`);
+      ctx.refreshViews();
+    };
+  };
+
+  handlers['resolveit.approveAction'] = recordDecision(true);
+  handlers['resolveit.skipAction'] = recordDecision(false);
+
+  handlers['resolveit.applyApprovedRepairs'] = guarded('repair', async (root, token) => {
+    const plan = ctx.state.getRepairPlan();
+    if (!plan) {
+      ctx.messages.info('ResolveIt: no repair plan available. Generate a repair plan first.');
+      return;
+    }
+    if (ctx.state.isPlanStale()) {
+      ctx.messages.warn('ResolveIt: diagnostics changed since this plan was created. Generate a fresh plan before applying.');
+      ctx.logger.warn('Apply blocked: repair plan is stale relative to current diagnostics.');
+      return;
+    }
+    const approved = ctx.state.getApprovedIds();
+    if (approved.length === 0) {
+      ctx.messages.info('ResolveIt: approve at least one repair (Allow) before applying. Nothing was executed.');
+      ctx.revealView?.('resolveit.dashboard');
+      return;
+    }
+    ctx.state.clearLastError();
+    const before = ctx.state.getDiagnostics();
+    try {
+      ctx.state.setActiveOperation({ kind: 'repair', activity: 'Applying approved repairs…' });
+      ctx.status.showBusy('applying repairs', 'ResolveIt: applying approved repairs');
+      ctx.refreshViews();
+      const execution = await ctx.core.executeApproved(root, plan, approved);
+      token.throwIfCancelled();
+      if (!ctx.workspaces.isCurrent(root)) {
+        ctx.logger.warn(`Workspace changed during repair execution; discarding results for ${root}.`);
+        return;
+      }
+      ctx.state.setExecution({ results: execution.results, success: execution.success, timestamp: new Date() });
+      const failed = execution.results.filter((entry) => !entry.result.success);
+      const succeeded = execution.results.filter((entry) => entry.result.success);
+      ctx.logger.info(`Apply: ${approved.length} approved, ${succeeded.length} succeeded, ${failed.length} failed.`);
+      if (failed.length > 0) {
+        const classified = repairFailure(failed.map((entry) => entry.result.error ?? 'unknown error').join('; '));
+        ctx.messages.error(classified.userMessage);
+        ctx.logger.error(classified.logDetail);
+        ctx.state.setLastError(classified.userMessage);
+      }
+      ctx.state.setActiveOperation({ kind: 'verify', activity: 'Verifying changes…' });
+      ctx.status.showBusy('verifying', 'ResolveIt: verifying repairs');
+      ctx.refreshViews();
+      const verification = await ctx.core.verifyAgainstPrevious(root, before);
+      token.throwIfCancelled();
+      if (!ctx.workspaces.isCurrent(root)) {
+        ctx.logger.warn(`Workspace changed during repair verification; discarding results for ${root}.`);
+        return;
+      }
+      ctx.state.setLastVerification({ resolved: verification.resolved, remaining: verification.remaining, timestamp: new Date() });
+      ctx.state.setDiagnostics(verification.current);
+      ctx.logger.info(`Verification: ${verification.resolved.length} resolved, ${verification.remaining.length} remaining.`);
+      if (verification.remaining.length > 0) {
+        const classified = verificationFailure(`${verification.remaining.length} blocking diagnostic(s) remain.`);
+        ctx.messages.warn(classified.userMessage);
+        ctx.logger.warn(classified.logDetail);
+      } else if (failed.length === 0) {
+        ctx.messages.info(`ResolveIt repair verified: ${verification.resolved.length} resolved, nothing remaining.`);
+      }
+      ctx.status.showIssues(verification.current.length, ctx.state.blockingCount());
+    } finally {
+      ctx.state.setActiveOperation(undefined);
+      ctx.refreshViews();
+    }
+  });
+
+  handlers['resolveit.reviewProblems'] = async (): Promise<void> => {
+    if (ctx.revealView) {
+      ctx.revealView('resolveit.diagnostics');
+      return;
+    }
+    ctx.messages.info('ResolveIt: open the ResolveIt Diagnostics view to review each problem.');
+  };
+
+  handlers['resolveit.reviewRepairs'] = async (): Promise<void> => {
+    if (ctx.revealView) {
+      ctx.revealView('resolveit.dashboard');
+      return;
+    }
+    const plan = ctx.state.getRepairPlan();
+    ctx.messages.info(
+      plan ? `ResolveIt: ${plan.actions.length} proposed change(s) await review.` : 'ResolveIt: no repair plan available yet.'
+    );
+  };
+
+  handlers['resolveit.askAI'] = async (): Promise<void> => {
+    const ai = ctx.state.getAIStatus();
+    if (ai && ai.available) {
+      await handlers['resolveit.generateRepairPlan']?.();
+      return;
+    }
+    ctx.messages.info(
+      'ResolveIt: AI planning is unavailable. Deterministic diagnostics still work — review the problems found.'
+    );
+    ctx.revealView?.('resolveit.dashboard');
+  };
+
+  handlers['resolveit.retryAI'] = async (): Promise<void> => {
+    const root = requireRoot(ctx);
+    if (!root) {
+      return;
+    }
+    try {
+      await ctx.coordinator.run('environment', root, async (token) => {
+        token.throwIfCancelled();
+        const status = await ctx.core.aiStatus(ctx.getAIConfig());
+        if (!ctx.workspaces.isCurrent(root)) {
+          return;
+        }
+        ctx.state.setAIStatus({ provider: status.provider, model: status.model, baseUrl: status.baseUrl, available: status.available });
+        ctx.refreshViews();
+        if (status.available) {
+          ctx.messages.info(`ResolveIt: AI available (${status.provider} · ${status.model}).`);
+        } else {
+          ctx.messages.warn('ResolveIt: AI is still unavailable. Deterministic diagnostics remain usable.');
+        }
+        ctx.logger.info(`AI provider: ${status.provider} (${status.available ? 'available' : 'unavailable'}).`);
+      });
+    } catch (error) {
+      reportClassified(ctx, classifyError(error, 'ResolveIt AI retry'), 'ResolveIt: AI retry failed');
+    }
+  };
+
+  handlers['resolveit.showDetails'] = async (): Promise<void> => {
+    if (ctx.showOutput) {
+      ctx.showOutput();
+      return;
+    }
+    ctx.messages.info('ResolveIt: detailed logs are available in the ResolveIt output channel.');
+  };
+
+  handlers['resolveit.openSettings'] = async (): Promise<void> => {
+    if (ctx.openSettings) {
+      ctx.openSettings('resolveit.ai');
+      return;
+    }
+    ctx.messages.info('ResolveIt: adjust the resolveit.ai.* settings to configure AI planning.');
   };
 
   return handlers;

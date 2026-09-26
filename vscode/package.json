@@ -23,6 +23,17 @@
     "onCommand:resolveit.requirements",
     "onCommand:resolveit.repair",
     "onCommand:resolveit.verify",
+    "onCommand:resolveit.analyzeProject",
+    "onCommand:resolveit.generateRepairPlan",
+    "onCommand:resolveit.applyApprovedRepairs",
+    "onCommand:resolveit.approveAction",
+    "onCommand:resolveit.skipAction",
+    "onCommand:resolveit.reviewProblems",
+    "onCommand:resolveit.reviewRepairs",
+    "onCommand:resolveit.askAI",
+    "onCommand:resolveit.retryAI",
+    "onCommand:resolveit.showDetails",
+    "onCommand:resolveit.openSettings",
     "workspaceContains:package.json",
     "workspaceContains:pyproject.toml",
     "workspaceContains:go.mod",
@@ -59,13 +70,62 @@
       {
         "command": "resolveit.verify",
         "title": "ResolveIt: Verify"
+      },
+      {
+        "command": "resolveit.analyzeProject",
+        "title": "ResolveIt: Analyze Project"
+      },
+      {
+        "command": "resolveit.generateRepairPlan",
+        "title": "ResolveIt: Generate Repair Plan"
+      },
+      {
+        "command": "resolveit.applyApprovedRepairs",
+        "title": "ResolveIt: Apply Approved Repairs"
+      },
+      {
+        "command": "resolveit.approveAction",
+        "title": "ResolveIt: Allow Repair Action"
+      },
+      {
+        "command": "resolveit.skipAction",
+        "title": "ResolveIt: Skip Repair Action"
+      },
+      {
+        "command": "resolveit.reviewProblems",
+        "title": "ResolveIt: Review Problems"
+      },
+      {
+        "command": "resolveit.reviewRepairs",
+        "title": "ResolveIt: Review Repairs"
+      },
+      {
+        "command": "resolveit.askAI",
+        "title": "ResolveIt: Ask AI"
+      },
+      {
+        "command": "resolveit.retryAI",
+        "title": "ResolveIt: Retry AI"
+      },
+      {
+        "command": "resolveit.showDetails",
+        "title": "ResolveIt: Show Details"
+      },
+      {
+        "command": "resolveit.openSettings",
+        "title": "ResolveIt: Open AI Settings"
       }
     ],
     "views": {
       "explorer": [
         {
+          "id": "resolveit.dashboard",
+          "name": "ResolveIt",
+          "type": "webview"
+        },
+        {
           "id": "resolveit.project",
-          "name": "ResolveIt"
+          "name": "ResolveIt Details"
         },
         {
           "id": "resolveit.diagnostics",
@@ -132,6 +192,7 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.20.0",
     "eslint": "^8.55.0",
     "typescript": "^5.3.0",

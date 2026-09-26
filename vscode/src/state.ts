@@ -3,6 +3,9 @@ import type {
   Diagnostic,
   EnvironmentInfo,
   ParsedRequirements,
+  RepairAction,
+  RepairPlan,
+  RepairResult,
 } from '../../src/index.js';
 
 export interface LastRunSummary {
@@ -24,6 +27,24 @@ export interface AIStatusState {
   readonly available: boolean;
 }
 
+export type ApprovalState = 'awaiting' | 'approved' | 'denied';
+
+export interface ActiveOperation {
+  readonly kind: string;
+  readonly activity: string;
+}
+
+export interface PlanExecutionSummary {
+  readonly results: ReadonlyArray<{ action: RepairAction; result: RepairResult }>;
+  readonly success: boolean;
+  readonly timestamp: Date;
+}
+
+export interface ExtensionErrorState {
+  readonly message: string;
+  readonly timestamp: Date;
+}
+
 const MAX_EVENTS = 200;
 
 export class ExtensionState {
@@ -36,7 +57,16 @@ export class ExtensionState {
   private lastVerification?: LastVerification;
   private events: AgentEvent[] = [];
   private revision = 0;
+  private diagnosticsRevision = 0;
   private workspaceRoot?: string;
+  private hasScanned = false;
+  private activeOperation?: ActiveOperation;
+  private repairPlan?: RepairPlan;
+  private planDiagnosticsRevision = -1;
+  private approvals = new Map<string, Exclude<ApprovalState, 'awaiting'>>();
+  private execution?: PlanExecutionSummary;
+  private lastError?: ExtensionErrorState;
+  private aiSummary?: string;
 
   getRevision(): number {
     return this.revision;
@@ -58,12 +88,119 @@ export class ExtensionState {
     this.lastRun = undefined;
     this.lastVerification = undefined;
     this.events = [];
+    this.hasScanned = false;
+    this.activeOperation = undefined;
+    this.repairPlan = undefined;
+    this.planDiagnosticsRevision = -1;
+    this.diagnosticsRevision = 0;
+    this.approvals = new Map();
+    this.execution = undefined;
+    this.lastError = undefined;
+    this.aiSummary = undefined;
     this.revision += 1;
     return true;
   }
 
+  markScanned(): void {
+    if (!this.hasScanned) {
+      this.hasScanned = true;
+      this.revision += 1;
+    }
+  }
+
+  getHasScanned(): boolean {
+    return this.hasScanned;
+  }
+
+  setActiveOperation(operation: ActiveOperation | undefined): void {
+    this.activeOperation = operation;
+    this.revision += 1;
+  }
+
+  getActiveOperation(): ActiveOperation | undefined {
+    return this.activeOperation;
+  }
+
+  setRepairPlan(plan: RepairPlan, summary?: string): void {
+    this.repairPlan = plan;
+    this.approvals = new Map();
+    this.execution = undefined;
+    this.planDiagnosticsRevision = this.diagnosticsRevision;
+    if (summary !== undefined) {
+      this.aiSummary = summary;
+    }
+    this.revision += 1;
+  }
+
+  clearRepairPlan(): void {
+    this.repairPlan = undefined;
+    this.approvals = new Map();
+    this.execution = undefined;
+    this.revision += 1;
+  }
+
+  getRepairPlan(): RepairPlan | undefined {
+    return this.repairPlan;
+  }
+
+  isPlanStale(): boolean {
+    return this.repairPlan !== undefined && this.planDiagnosticsRevision !== this.diagnosticsRevision;
+  }
+
+  setApproval(actionId: string, approved: boolean): void {
+    this.approvals.set(actionId, approved ? 'approved' : 'denied');
+    this.revision += 1;
+  }
+
+  getApproval(actionId: string): ApprovalState {
+    return this.approvals.get(actionId) ?? 'awaiting';
+  }
+
+  getApprovedIds(): ReadonlyArray<string> {
+    return [...this.approvals.entries()].filter(([, value]) => value === 'approved').map(([id]) => id);
+  }
+
+  getDecidedCount(): number {
+    return this.approvals.size;
+  }
+
+  setExecution(execution: PlanExecutionSummary): void {
+    this.execution = execution;
+    this.revision += 1;
+  }
+
+  getExecution(): PlanExecutionSummary | undefined {
+    return this.execution;
+  }
+
+  setLastError(message: string): void {
+    this.lastError = { message, timestamp: new Date() };
+    this.revision += 1;
+  }
+
+  clearLastError(): void {
+    if (this.lastError !== undefined) {
+      this.lastError = undefined;
+      this.revision += 1;
+    }
+  }
+
+  getLastError(): ExtensionErrorState | undefined {
+    return this.lastError;
+  }
+
+  setAISummary(summary: string | undefined): void {
+    this.aiSummary = summary;
+    this.revision += 1;
+  }
+
+  getAISummary(): string | undefined {
+    return this.aiSummary;
+  }
+
   setDiagnostics(diagnostics: ReadonlyArray<Diagnostic>): void {
     this.diagnostics = [...diagnostics];
+    this.diagnosticsRevision += 1;
     this.revision += 1;
   }
 

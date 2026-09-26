@@ -31,6 +31,7 @@ describe('bundled extension artifact', () => {
       expect(__testState.registeredCommands.has(id)).toBe(true);
     }
     expect(__testState.registeredViews).toEqual([
+      'resolveit.dashboard',
       'resolveit.project',
       'resolveit.diagnostics',
       'resolveit.environment',

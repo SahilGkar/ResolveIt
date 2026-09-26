@@ -5,7 +5,8 @@ export type OperationKind =
   | 'environment'
   | 'requirements'
   | 'repair'
-  | 'verify';
+  | 'verify'
+  | 'analyze';
 
 export class OperationBusyError extends Error {
   readonly kind: OperationKind;

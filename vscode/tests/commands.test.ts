@@ -259,6 +259,146 @@ describe('command handlers', () => {
     }
   }, 120000);
 
+  it('should analyze the full pipeline with one primary action', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls), FOLDERS);
+    await createCommandHandlers(ctx)['resolveit.analyzeProject']?.();
+    expect(ctx.state.getHasScanned()).toBe(true);
+    expect(calls).toEqual(['scan:/tmp/ws', 'environment', 'requirements', 'scan:/tmp/ws', 'environment', 'requirements']);
+    expect(recorded.messages.some((m) => m.message.includes('healthy'))).toBe(true);
+  });
+
+  it('should generate a repair plan and store it for dashboard review', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls, '>=99.0.0'), FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    const plan = ctx.state.getRepairPlan();
+    expect(plan).toBeDefined();
+    expect(plan?.actions.length).toBeGreaterThan(0);
+    expect(recorded.messages.some((m) => m.message.includes('Repair plan ready'))).toBe(true);
+    expect(ctx.state.isPlanStale()).toBe(false);
+  });
+
+  it('should refuse to generate a plan before analysis', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls, '>=99.0.0'), FOLDERS);
+    await createCommandHandlers(ctx)['resolveit.generateRepairPlan']?.();
+    expect(ctx.state.getRepairPlan()).toBeUndefined();
+    expect(recorded.messages.some((m) => m.message.includes('analyze the project first'))).toBe(true);
+  });
+
+  it('should record per-action approval decisions without executing', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls, '>=99.0.0'), FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.approveAction']?.('unknown-without-plan');
+    expect(recorded.messages.some((m) => m.message.includes('no repair plan'))).toBe(true);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    const plan = ctx.state.getRepairPlan();
+    expect(plan).toBeDefined();
+    const [first, second] = plan?.actions ?? [];
+    await handlers['resolveit.approveAction']?.(first?.id ?? 'missing');
+    await handlers['resolveit.skipAction']?.(second?.id ?? 'missing');
+    await handlers['resolveit.approveAction']?.('not-in-plan');
+    expect(ctx.state.getApproval(first?.id ?? '').valueOf()).toBe('approved');
+    expect(ctx.state.getApproval(second?.id ?? '').valueOf()).toBe('denied');
+    expect(recorded.messages.some((m) => m.message.includes('not part of the current plan'))).toBe(true);
+    expect(calls.filter((call) => call.startsWith('scan:'))).not.toHaveLength(0);
+  });
+
+  it('should require approvals before applying', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls, '>=99.0.0'), FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    await handlers['resolveit.applyApprovedRepairs']?.();
+    expect(recorded.messages.some((m) => m.message.includes('approve at least one repair'))).toBe(true);
+    expect(ctx.state.getExecution()).toBeUndefined();
+  });
+
+  it('should block applying a stale plan', async () => {
+    const calls: string[] = [];
+    const core = stubCore(calls, '>=99.0.0');
+    let executed = 0;
+    core.executeApproved = (async () => {
+      executed += 1;
+      return { results: [], success: true };
+    }) as never;
+    const { ctx, recorded } = fakeContext(core, FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    const plan = ctx.state.getRepairPlan();
+    await handlers['resolveit.approveAction']?.(plan?.actions[0]?.id ?? 'missing');
+    ctx.state.setDiagnostics(await core.diagnoseProject('/tmp/ws'));
+    expect(ctx.state.isPlanStale()).toBe(true);
+    await handlers['resolveit.applyApprovedRepairs']?.();
+    expect(executed).toBe(0);
+    expect(recorded.messages.some((m) => m.message.includes('fresh plan'))).toBe(true);
+  });
+
+  it('should apply approved repairs through Core and verify', async () => {
+    const calls: string[] = [];
+    const core = stubCore(calls, '>=99.0.0');
+    const { ctx, recorded } = fakeContext(core, FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    const plan = ctx.state.getRepairPlan();
+    expect(plan).toBeDefined();
+    const approvedId = plan?.actions[0]?.id ?? 'missing';
+    await handlers['resolveit.approveAction']?.(approvedId);
+    core.executeApproved = (async (_root: string, attempt: { actions: Array<{ id: string }> }, ids: ReadonlyArray<string>) => {
+      expect(ids).toEqual([approvedId]);
+      const action = attempt.actions[0];
+      return { results: [{ action, result: { success: true } }], success: true };
+    }) as never;
+    core.verifyAgainstPrevious = (async () => ({ resolved: ['a'], remaining: [], current: [] })) as never;
+    await handlers['resolveit.applyApprovedRepairs']?.();
+    expect(ctx.state.getExecution()?.success).toBe(true);
+    expect(ctx.state.getLastVerification()?.remaining).toEqual([]);
+    expect(recorded.messages.some((m) => m.message.includes('verified'))).toBe(true);
+  });
+
+  it('should surface repair failure without false success', async () => {
+    const calls: string[] = [];
+    const core = stubCore(calls, '>=99.0.0');
+    const { ctx, recorded } = fakeContext(core, FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.analyzeProject']?.();
+    await handlers['resolveit.generateRepairPlan']?.();
+    const plan = ctx.state.getRepairPlan();
+    await handlers['resolveit.approveAction']?.(plan?.actions[0]?.id ?? 'missing');
+    core.executeApproved = (async (_root: string, attempt: { actions: Array<{ id: string }> }) => {
+      const action = attempt.actions[0];
+      return { results: [{ action, result: { success: false, error: 'pip failed' } }], success: false };
+    }) as never;
+    core.verifyAgainstPrevious = (async () => ({ resolved: [], remaining: ['still-broken'], current: [] })) as never;
+    await handlers['resolveit.applyApprovedRepairs']?.();
+    expect(ctx.state.getExecution()?.success).toBe(false);
+    expect(ctx.state.getLastError()).toBeDefined();
+    expect(recorded.messages.some((m) => m.kind === 'error' && m.message.includes('could not complete'))).toBe(true);
+    expect(recorded.messages.some((m) => m.message.includes('resolved'))).toBe(false);
+  });
+
+  it('should support askAI, retryAI, review, details, and settings helpers', async () => {
+    const calls: string[] = [];
+    const { ctx, recorded } = fakeContext(stubCore(calls), FOLDERS);
+    const handlers = createCommandHandlers(ctx);
+    await handlers['resolveit.reviewProblems']?.();
+    await handlers['resolveit.reviewRepairs']?.();
+    await handlers['resolveit.askAI']?.();
+    await handlers['resolveit.showDetails']?.();
+    await handlers['resolveit.openSettings']?.();
+    expect(recorded.messages.some((m) => m.message.includes('AI planning is unavailable'))).toBe(true);
+    await handlers['resolveit.retryAI']?.();
+    expect(ctx.state.getAIStatus()).toBeDefined();
+  });
+
   it('should expose environment and requirement commands', async () => {
     const calls: string[] = [];
     const { ctx, recorded } = fakeContext(stubCore(calls), FOLDERS);

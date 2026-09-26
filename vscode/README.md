@@ -8,7 +8,8 @@ activation, workspace integration, UI, approval prompts, progress, and result di
 
 ```text
 VS Code Extension (this project)
-  activation, commands, tree views, dialogs, progress, status bar, output channel
+  activation, commands, dashboard webview, tree views, dialogs,
+  progress, status bar, output channel
         │  direct TypeScript import, bundled with esbuild (`vscode` external)
         ▼
 ResolveIt Core (`../src`, via `../src/index.ts`)
@@ -18,8 +19,10 @@ ResolveIt Core (`../src`, via `../src/index.ts`)
 
 No second diagnostic/repair/AI engine exists in the extension. The Core
 `PermissionManager` remains authoritative: the extension collects approvals
-through QuickPick dialogs and passes approved action IDs down; it cannot
-approve, bypass, or escalate anything itself.
+in the dashboard (`Allow`/`Skip` per repair card, then `Apply Approved
+Repairs`) and passes approved action IDs down; it cannot approve, bypass,
+or escalate anything itself. The legacy QuickPick approval remains as a
+fallback for the `Repair`/`Run` commands.
 
 ## Development
 
@@ -37,10 +40,35 @@ To create a distributable package (requires the standard tooling, not published)
 npx @vscode/vsce package
 ```
 
+## User flow
+
+```text
+Analyze → Review findings → Generate AI plan → Review repairs
+  → Approve → Apply → Verify
+```
+
+The dashboard shows one obvious primary action based on real Core state
+(`Analyze Project`, `Review Problems`, `Generate Repair Plan`,
+`Review Repairs`, `Apply Approved Repairs`, `Verify Project`). AI proposals
+are presented as `Proposed` cards and are never executed directly: each card
+moves `Proposed → Awaiting approval → Approved → Executing → Executed →
+Verified`, and `Verified` appears only after verification passes.
+
 ## Commands
 
 | Command | ID |
 |---|---|
+| ResolveIt: Analyze Project | `resolveit.analyzeProject` |
+| ResolveIt: Generate Repair Plan | `resolveit.generateRepairPlan` |
+| ResolveIt: Apply Approved Repairs | `resolveit.applyApprovedRepairs` |
+| ResolveIt: Review Problems | `resolveit.reviewProblems` |
+| ResolveIt: Review Repairs | `resolveit.reviewRepairs` |
+| ResolveIt: Ask AI | `resolveit.askAI` |
+| ResolveIt: Retry AI | `resolveit.retryAI` |
+| ResolveIt: Show Details | `resolveit.showDetails` |
+| ResolveIt: Open AI Settings | `resolveit.openSettings` |
+| ResolveIt: Allow Repair Action | `resolveit.approveAction` |
+| ResolveIt: Skip Repair Action | `resolveit.skipAction` |
 | ResolveIt: Scan Project | `resolveit.scan` |
 | ResolveIt: Diagnose Project | `resolveit.diagnose` |
 | ResolveIt: Run ResolveIt | `resolveit.run` |
@@ -51,7 +79,13 @@ npx @vscode/vsce package
 
 ## Sidebar (Explorer)
 
-- **ResolveIt** — project name, issue status, action shortcuts, AI status, last run.
+- **ResolveIt** (dashboard webview) — the main entry point: project status,
+  the single primary action for the current state, AI status, proposed
+  repair cards with `Allow`/`Skip`, the apply control, and the verification
+  result. Respects VS Code themes (dark/light/high-contrast) via theme
+  variables; strict content security policy with a per-load script nonce.
+- **ResolveIt Details** — project name, issue status, action shortcuts,
+  AI status, last run.
 - **ResolveIt Diagnostics** — grouped Critical / Errors / Warnings / Info; expanding
   an item shows message, evidence with expected/actual values, source file (click to
   open), and remediation candidates. Diagnostics come only from the Core engine.
@@ -59,11 +93,19 @@ npx @vscode/vsce package
 - **ResolveIt Requirements** — runtime, dependency, build-tool, and container
   requirements with source files (click to open).
 
+Every view has an empty state that explains what it means and what to do
+next; long operations show progress with the current phase.
+
 ## Repair approval
 
-`ResolveIt: Repair` (and the agent `Run`) prints the plan to the `ResolveIt`
-output channel, then asks per action via QuickPick (`Allow` / `Deny`). Denied
-actions never execute. Manual-only items are reported, never run.
+The dashboard is the main approval experience: each proposed repair shows
+type, target, reason, scope, risk, and the exact change, with `Allow` /
+`Skip` per card and a single `Apply Approved Repairs` control. Applying a
+plan whose diagnostics changed since planning is blocked until a fresh plan
+is generated. `ResolveIt: Repair` (and the agent `Run`) keep the legacy
+flow: the plan is printed to the `ResolveIt` output channel, then each
+action is asked via QuickPick (`Allow` / `Deny`). Denied actions never
+execute. Manual-only items are reported, never run.
 
 ## AI configuration
 
@@ -136,5 +178,8 @@ npm run validate-package
 
 - API keys only via environment variables (no settings UI for secrets).
 - Multi-root: first folder only.
-- No webviews; detail display uses native tree items and the output channel.
+- The dashboard webview is presentation-only: strict CSP with a per-load
+  nonce, no inline handlers, no `eval`, no local resource loading, an
+  allowlisted command protocol, and approval messages validated against the
+  current Core plan (unknown action IDs are ignored).
 - Not published to any marketplace.

@@ -62,7 +62,7 @@ export class RequirementsTreeProvider implements vscode.TreeDataProvider<Require
   getChildren(node?: RequirementsNode): RequirementsNode[] {
     const all = this.state.getRequirements().flatMap((parsed) => [...parsed.requirements]);
     if (all.length === 0 && !node) {
-      return [{ kind: 'section', label: '(run ResolveIt: Show Requirements)' }];
+      return [{ kind: 'section', label: 'No project requirements detected' }];
     }
     if (!node) {
       const sections: string[] = [];

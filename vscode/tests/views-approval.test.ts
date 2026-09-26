@@ -105,13 +105,14 @@ describe('project tree', () => {
 
     const actions = provider.getChildren({ kind: 'section', label: 'Actions' });
     expect(actions.map((node) => (node.kind === 'item' ? node.commandId : ''))).toEqual([
-      'resolveit.scan',
-      'resolveit.diagnose',
-      'resolveit.run',
+      'resolveit.analyzeProject',
+      'resolveit.generateRepairPlan',
+      'resolveit.applyApprovedRepairs',
+      'resolveit.verify',
     ]);
 
     const item = provider.getTreeItem(actions[0] as never);
-    expect(item.command?.command).toBe('resolveit.scan');
+    expect(item.command?.command).toBe('resolveit.analyzeProject');
   });
 });
 

@@ -23,6 +23,13 @@ export class EnvironmentTreeProvider implements vscode.TreeDataProvider<Environm
     if (node.description) {
       item.description = node.description;
     }
+    if (node.label.startsWith('✓')) {
+      item.iconPath = new vscode.ThemeIcon('check');
+    } else if (node.label.startsWith('✗')) {
+      item.iconPath = new vscode.ThemeIcon('x');
+    } else if (node.label.startsWith('?')) {
+      item.iconPath = new vscode.ThemeIcon('question');
+    }
     return item;
   }
 
@@ -30,7 +37,7 @@ export class EnvironmentTreeProvider implements vscode.TreeDataProvider<Environm
     const environment = this.state.getEnvironment();
     if (!environment) {
       if (!node) {
-        return [{ kind: 'item', label: '(run ResolveIt: Show Environment)' }];
+        return [{ kind: 'item', label: 'No environment data yet', description: 'Analyze the project first' }];
       }
       return [];
     }

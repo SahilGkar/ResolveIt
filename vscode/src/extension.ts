@@ -7,6 +7,7 @@ import type { CancellationTokenLike, CommandContext } from './commands.js';
 import { configToAIConfigOverrides, friendlyError, multiRootNotice } from './mappers.js';
 import { OperationCoordinator } from './operations.js';
 import { ExtensionState } from './state.js';
+import { DashboardProvider } from './dashboard/view.js';
 import { vscodeApprovalDialogs } from './ui/approval.js';
 import { Logger } from './ui/output.js';
 import { createStatusBarItem, showOk } from './ui/statusBar.js';
@@ -24,9 +25,21 @@ export const COMMAND_IDS = [
   'resolveit.requirements',
   'resolveit.repair',
   'resolveit.verify',
+  'resolveit.analyzeProject',
+  'resolveit.generateRepairPlan',
+  'resolveit.applyApprovedRepairs',
+  'resolveit.approveAction',
+  'resolveit.skipAction',
+  'resolveit.reviewProblems',
+  'resolveit.reviewRepairs',
+  'resolveit.askAI',
+  'resolveit.retryAI',
+  'resolveit.showDetails',
+  'resolveit.openSettings',
 ] as const;
 
 export const VIEW_IDS = [
+  'resolveit.dashboard',
   'resolveit.project',
   'resolveit.diagnostics',
   'resolveit.environment',
@@ -76,11 +89,17 @@ export function activate(context: vscode.ExtensionContext): void {
     return root ? `${root}/${relative}` : relative;
   });
 
+  const dashboard = new DashboardProvider(state, logger, {
+    isMultiRoot: () => (vscode.workspace.workspaceFolders ?? []).length > 1,
+    executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
+  });
+
   const refreshViews = (): void => {
     projectTree.refresh();
     diagnosticsTree.refresh();
     environmentTree.refresh();
     requirementsTree.refresh();
+    dashboard.refresh();
   };
 
   const coordinator = new OperationCoordinator();
@@ -157,6 +176,15 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     getAIConfig: readAIConfig,
     getMaxIterations: readMaxIterations,
+    revealView: (viewId: string): void => {
+      void vscode.commands.executeCommand(`${viewId}.focus`);
+    },
+    openSettings: (query: string): void => {
+      void vscode.commands.executeCommand('workbench.action.openSettings', query);
+    },
+    showOutput: (): void => {
+      logger.show();
+    },
     openFile: async (absolutePath: string): Promise<void> => {
       try {
         const document = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath));
@@ -170,10 +198,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const handlers = createCommandHandlers(commandContext);
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider(VIEW_IDS[0], projectTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[1], diagnosticsTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[2], environmentTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[3], requirementsTree),
+    vscode.window.registerWebviewViewProvider(DashboardProvider.viewId, dashboard),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[1], projectTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[2], diagnosticsTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[3], environmentTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[4], requirementsTree),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       workspaces.sync();
     }),
@@ -189,7 +218,7 @@ export function activate(context: vscode.ExtensionContext): void {
   for (const id of COMMAND_IDS) {
     const handler = handlers[id];
     if (handler) {
-      context.subscriptions.push(vscode.commands.registerCommand(id, () => handler()));
+      context.subscriptions.push(vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...args)));
     }
   }
 

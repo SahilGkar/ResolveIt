@@ -16,6 +16,18 @@ export type DiagnosticsNode =
 
 const GROUP_ORDER: ReadonlyArray<SeverityGroup> = ['Critical', 'Errors', 'Warnings', 'Info'];
 
+function severityThemeIcon(severity: string): vscode.ThemeIcon {
+  switch (severity) {
+    case 'critical':
+    case 'error':
+      return new vscode.ThemeIcon('error');
+    case 'warning':
+      return new vscode.ThemeIcon('warning');
+    default:
+      return new vscode.ThemeIcon('info');
+  }
+}
+
 export class DiagnosticsTreeProvider implements vscode.TreeDataProvider<DiagnosticsNode> {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData: vscode.Event<void> = this.emitter.event;
@@ -39,8 +51,9 @@ export class DiagnosticsTreeProvider implements vscode.TreeDataProvider<Diagnost
     if (node.kind === 'diagnostic') {
       const item = new vscode.TreeItem(diagnosticLabel(node.diagnostic), vscode.TreeItemCollapsibleState.Collapsed);
       item.description = diagnosticDescription(node.diagnostic);
-      item.tooltip = node.diagnostic.message;
+      item.tooltip = `${node.diagnostic.message}\n\n${diagnosticDetails(node.diagnostic).join('\n')}`;
       item.contextValue = 'resolveit-diagnostic';
+      item.iconPath = severityThemeIcon(node.diagnostic.severity);
       return item;
     }
     const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);

@@ -112,10 +112,13 @@ unusable, ResolveIt falls back to deterministic planning with an explicit notice
 
 ## VS Code Extension
 
-A thin client lives in `vscode/` (see `vscode/README.md`). It exposes Core
-capabilities (scan, diagnose, run, environment, requirements, repair, verify)
-through commands, Explorer views, approval dialogs, progress notifications, and
-a status bar item. All business logic stays in ResolveIt Core.
+A thin client lives in `vscode/` (see `vscode/README.md`). Its main entry
+point is the ResolveIt dashboard: one obvious primary action per state
+(Analyze → Review findings → Generate AI plan → Review repairs → Approve →
+Apply → Verify). Detail views (diagnostics, environment, requirements),
+approval prompts, progress notifications, and a status bar item support it.
+All business logic stays in ResolveIt Core; AI proposals are never executed
+directly.
 
 ```bash
 cd vscode

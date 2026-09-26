@@ -174,6 +174,10 @@ export const window = {
     __testState.registeredViews.push(viewId);
     return { dispose: () => undefined };
   },
+  registerWebviewViewProvider(viewId: string, _provider: unknown): { dispose(): void } {
+    __testState.registeredViews.push(viewId);
+    return { dispose: () => undefined };
+  },
   createOutputChannel(_name: string): { appendLine(message: string): void; show(): void } {
     return {
       appendLine: (message: string) => __testState.outputLines.push(message),

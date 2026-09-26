@@ -27,6 +27,9 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<ProjectNode>
     if (node.commandId) {
       item.command = { command: node.commandId, title: node.label };
     }
+    if (node.label.startsWith('Provider:') || node.label.startsWith('Status:') || node.label.startsWith('Model:')) {
+      item.iconPath = new vscode.ThemeIcon('sparkle');
+    }
     return item;
   }
 
@@ -44,23 +47,32 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<ProjectNode>
       return [];
     }
     switch (node.label) {
-      case 'Project':
-        return [{ kind: 'item', label: this.state.getProjectName() ?? '(not scanned)' }];
+      case 'Project': {
+        const name = this.state.getProjectName();
+        if (!name) {
+          return [{ kind: 'item', label: 'Not analyzed yet', description: 'Run Analyze Project', commandId: 'resolveit.analyzeProject' }];
+        }
+        return [{ kind: 'item', label: name }];
+      }
       case 'Status': {
+        if (!this.state.getHasScanned()) {
+          return [{ kind: 'item', label: 'No analysis results yet', description: 'Analyze to check environment and requirements', commandId: 'resolveit.analyzeProject' }];
+        }
         const total = this.state.getDiagnostics().length;
         const blocking = this.state.blockingCount();
         return [{ kind: 'item', label: statusTextForIssues(blocking), description: `${total} total` }];
       }
       case 'Actions':
         return [
-          { kind: 'item', label: 'Scan', commandId: 'resolveit.scan' },
-          { kind: 'item', label: 'Diagnose', commandId: 'resolveit.diagnose' },
-          { kind: 'item', label: 'Run ResolveIt', commandId: 'resolveit.run' },
+          { kind: 'item', label: 'Analyze Project', commandId: 'resolveit.analyzeProject' },
+          { kind: 'item', label: 'Generate Repair Plan', commandId: 'resolveit.generateRepairPlan' },
+          { kind: 'item', label: 'Apply Approved Repairs', commandId: 'resolveit.applyApprovedRepairs' },
+          { kind: 'item', label: 'Verify Project', commandId: 'resolveit.verify' },
         ];
       case 'AI': {
         const ai = this.state.getAIStatus();
         if (!ai) {
-          return [{ kind: 'item', label: 'Provider: (unknown)' }];
+          return [{ kind: 'item', label: 'Provider: (unknown)', description: 'Configure in settings', commandId: 'resolveit.openSettings' }];
         }
         return [
           { kind: 'item', label: `Provider: ${ai.provider}` },
