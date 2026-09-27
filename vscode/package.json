@@ -120,7 +120,7 @@
       "explorer": [
         {
           "id": "resolveit.dashboard",
-          "name": "ResolveIt",
+          "name": "ResolveIt Action Hub",
           "type": "webview"
         },
         {

@@ -7,7 +7,7 @@ import type { CancellationTokenLike, CommandContext } from './commands.js';
 import { configToAIConfigOverrides, friendlyError, multiRootNotice } from './mappers.js';
 import { OperationCoordinator } from './operations.js';
 import { ExtensionState } from './state.js';
-import { DashboardProvider } from './dashboard/view.js';
+import { HubProvider } from './hub/view.js';
 import { vscodeApprovalDialogs } from './ui/approval.js';
 import { Logger } from './ui/output.js';
 import { createStatusBarItem, showOk } from './ui/statusBar.js';
@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
     return root ? `${root}/${relative}` : relative;
   });
 
-  const dashboard = new DashboardProvider(state, logger, {
+  const hub = new HubProvider(state, logger, {
     isMultiRoot: () => (vscode.workspace.workspaceFolders ?? []).length > 1,
     executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
   });
@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticsTree.refresh();
     environmentTree.refresh();
     requirementsTree.refresh();
-    dashboard.refresh();
+    hub.refresh();
   };
 
   const coordinator = new OperationCoordinator();
@@ -198,7 +198,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const handlers = createCommandHandlers(commandContext);
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(DashboardProvider.viewId, dashboard),
+    vscode.window.registerWebviewViewProvider(HubProvider.viewId, hub),
     vscode.window.registerTreeDataProvider(VIEW_IDS[1], projectTree),
     vscode.window.registerTreeDataProvider(VIEW_IDS[2], diagnosticsTree),
     vscode.window.registerTreeDataProvider(VIEW_IDS[3], environmentTree),

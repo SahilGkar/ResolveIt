@@ -269,10 +269,11 @@ function renderCard(card: RepairCardModel): string {
   const badge = lifecycleBadgeClass(card.lifecycle);
   const allowPressed = card.approval === 'approved' ? 'true' : 'false';
   const skipPressed = card.approval === 'denied' ? 'true' : 'false';
+  const approvalText = approvalLabel(card.approval);
   const approvalBadge =
-    card.lifecycle === 'approved' || card.lifecycle === 'denied'
+    approvalText === lifecycleLabel(card.lifecycle)
       ? ''
-      : ` <span class="badge">${escapeHtml(approvalLabel(card.approval))}</span>`;
+      : ` <span class="badge">${escapeHtml(approvalText)}</span>`;
   const failed = card.lifecycle === 'failed' && card.executionError ? `<p class="desc">Failed: ${escapeHtml(card.executionError)}</p>` : '';
   return [
     '<div class="card">',

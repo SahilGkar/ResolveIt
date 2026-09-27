@@ -1,18 +1,18 @@
 import * as vscode from 'vscode';
-import { buildDashboardModel } from './model.js';
-import { snapshotFromState } from './snapshot.js';
-import { dashboardStyles, renderDashboardBody } from './render.js';
-import { toRepairCard } from './cards.js';
-import { validateDashboardMessage } from './messages.js';
+import { snapshotFromState } from '../dashboard/snapshot.js';
+import { toRepairCard } from '../dashboard/cards.js';
+import { validateDashboardMessage } from '../dashboard/messages.js';
+import { buildHubModel } from './model.js';
+import { hubStyles, renderHubBody } from './render.js';
 import type { ExtensionState } from '../state.js';
 import type { Logger } from '../ui/output.js';
 
-export interface DashboardProviderOptions {
+export interface HubProviderOptions {
   readonly isMultiRoot: () => boolean;
   readonly executeCommand: (command: string, ...args: unknown[]) => Thenable<unknown>;
 }
 
-export class DashboardProvider implements vscode.WebviewViewProvider {
+export class HubProvider implements vscode.WebviewViewProvider {
   static readonly viewId = 'resolveit.dashboard';
 
   private view?: vscode.WebviewView;
@@ -20,7 +20,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly state: ExtensionState,
     private readonly logger: Logger,
-    private readonly options: DashboardProviderOptions
+    private readonly options: HubProviderOptions
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -43,14 +43,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
   private async handleMessage(message: unknown): Promise<void> {
     const validated = validateDashboardMessage(message);
     if (!validated) {
-      this.logger.warn('Dashboard sent an unrecognized message; ignoring it.');
+      this.logger.warn('Action Hub sent an unrecognized message; ignoring it.');
       return;
     }
     if (validated.command === 'resolveit.approveAction' || validated.command === 'resolveit.skipAction') {
       const plan = this.state.getRepairPlan();
       const known = plan?.actions.some((action) => action.id === validated.actionId) ?? false;
       if (!known) {
-        this.logger.warn(`Dashboard requested approval for an unknown action (${validated.actionId ?? 'missing'}); ignoring it.`);
+        this.logger.warn(`Action Hub requested approval for an unknown action (${validated.actionId ?? 'missing'}); ignoring it.`);
         return;
       }
     }
@@ -61,7 +61,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         await this.options.executeCommand(validated.command);
       }
     } catch (error) {
-      this.logger.error(`Dashboard command ${validated.command} failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Action Hub command ${validated.command} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.postState();
   }
@@ -75,32 +75,26 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       hasWorkspace: folders.length > 0,
       workspaceName: folders[0]?.name,
     });
-    const model = buildDashboardModel(snapshot);
+    const model = buildHubModel(snapshot);
     const plan = this.state.getRepairPlan();
     const execution = this.state.getExecution();
     const verification = this.state.getLastVerification();
-    const ai = this.state.getAIStatus();
     const verifiedKeys = new Set(verification?.resolved ?? []);
     const cards = (plan?.actions ?? []).map((action) => {
       const approval = this.state.getApproval(action.id);
       const entry = execution?.results.find((candidate) => candidate.action.id === action.id);
       return toRepairCard(action, approval, entry ? { result: entry.result, verified: verifiedKeys.size > 0, executing: false } : undefined);
     });
-    const body = renderDashboardBody({
+    const applyNode = model.nodes.find((node) => node.id === 'apply');
+    const body = renderHubBody({
       model,
       workspaceName: folders[0]?.name ?? 'No folder open',
       multiRoot: this.options.isMultiRoot(),
-      ai: ai ? { provider: ai.provider, model: ai.model, available: ai.available } : undefined,
       aiSummary: this.state.getAISummary(),
       cards,
+      canApply: (applyNode?.enabled ?? false) && (applyNode?.command === 'resolveit.applyApprovedRepairs'),
+      applySub: applyNode?.enabled === true ? (applyNode.sub ?? '') : (applyNode?.disabledReason ?? 'Review each change first.'),
       verification: verification ? { resolved: verification.resolved.length, remaining: verification.remaining.length } : undefined,
-      execution: execution
-        ? {
-            succeeded: execution.results.filter((entry) => entry.result.success).length,
-            failed: execution.results.filter((entry) => !entry.result.success).length,
-          }
-        : undefined,
-      environmentReady: this.state.getEnvironment() ? true : undefined,
     });
     void this.view.webview.postMessage({ type: 'render', html: body });
   }
@@ -115,17 +109,28 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       '<meta charset="UTF-8">',
       `<meta http-equiv="Content-Security-Policy" content="${csp}">`,
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-      `<style>${dashboardStyles()}</style>`,
+      `<style>${hubStyles()}</style>`,
       '</head>',
       '<body>',
-      '<div id="root" aria-live="polite"><p class="desc">Loading ResolveIt dashboard…</p></div>',
+      '<div id="root" aria-live="polite"><p class="hub-sub">Loading ResolveIt…</p></div>',
       `<script nonce="${nonce}">`,
       '(function(){var api=acquireVsCodeApi();var root=document.getElementById("root");',
+      'var ui=api.getState()||{expanded:false,screen:"hub"};',
+      'function paint(){var c=root.querySelector("[data-hub-toggle].hub-collapsed");var x=root.querySelector(".hub-expanded");',
+      'if(!c||!x)return;var ex=!!ui.expanded;c.hidden=ex;x.hidden=!ex;',
+      'c.setAttribute("aria-expanded",ex?"true":"false");',
+      'var hub=x.querySelector(\'[data-screen="hub"]\');var rep=x.querySelector(\'[data-screen="report"]\');',
+      'if(hub&&rep){var showReport=ex&&ui.screen==="report";hub.hidden=showReport;rep.hidden=!showReport;}}',
+      'function save(){try{api.setState(ui);}catch(e){}}',
       'document.addEventListener("click",function(e){var t=e.target;if(!(t instanceof HTMLElement))return;',
-      'var el=t.closest("[data-command]");if(!el)return;var cmd=el.getAttribute("data-command");if(!cmd)return;',
+      'var tg=t.closest("[data-hub-toggle]");if(tg){ui.expanded=!ui.expanded;if(!ui.expanded){ui.screen="hub";}save();paint();',
+      'if(ui.expanded){var f=root.querySelector(".hub-expanded .hub-node:enabled, .hub-expanded .hub-node:not([disabled])");if(f)f.focus();}return;}',
+      'var sc=t.closest("[data-screen-target]");if(sc){ui.expanded=true;ui.screen=sc.getAttribute("data-screen-target")==="report"?"report":"hub";save();paint();return;}',
+      'var el=t.closest("[data-command]");if(!el||el.disabled)return;var cmd=el.getAttribute("data-command");if(!cmd)return;',
       'var msg={type:"command",command:cmd};var id=el.getAttribute("data-action-id");if(id)msg.actionId=id;',
       'api.postMessage(msg);});',
-      'window.addEventListener("message",function(e){var m=e.data;if(m&&m.type==="render"&&typeof m.html==="string"){root.innerHTML=m.html;}});',
+      'document.addEventListener("keydown",function(e){if(e.key==="Escape"&&ui.expanded){ui.expanded=false;ui.screen="hub";save();paint();}});',
+      'window.addEventListener("message",function(e){var m=e.data;if(m&&m.type==="render"&&typeof m.html==="string"){root.innerHTML=m.html;paint();}});',
       '})();',
       '</script>',
       '</body>',

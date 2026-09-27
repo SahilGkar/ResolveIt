@@ -40,19 +40,26 @@ To create a distributable package (requires the standard tooling, not published)
 npx @vscode/vsce package
 ```
 
-## User flow
+## User flow (Action Hub)
+
+The primary experience is the **ResolveIt Action Hub**: a collapsed
+`◆ ResolveIt` control that expands into a radial hub with four actions
+around the center — Analyze Project, Diagnostics, AI Report, Apply
+Changes. Each node shows its live state (`3 Diagnostics`, `AI Report
+Ready`, `1 of 2 approved`) and is disabled with a visible reason when it
+cannot run yet. Choosing the AI Report node opens a focused report screen
+(detected problem, proposed repair, reason, scope, risk, Allow/Skip,
+Apply Approved Changes, back to hub).
 
 ```text
-Analyze → Review findings → Generate AI plan → Review repairs
+Click ResolveIt → choose Analyze, Diagnostics, AI Report, or Apply
   → Approve → Apply → Verify
 ```
 
-The dashboard shows one obvious primary action based on real Core state
-(`Analyze Project`, `Review Problems`, `Generate Repair Plan`,
-`Review Repairs`, `Apply Approved Repairs`, `Verify Project`). AI proposals
-are presented as `Proposed` cards and are never executed directly: each card
-moves `Proposed → Awaiting approval → Approved → Executing → Executed →
-Verified`, and `Verified` appears only after verification passes.
+AI proposals are presented as `Proposed` cards and are never executed
+directly: each card moves `Proposed → Awaiting approval → Approved →
+Executing → Executed → Verified`, and `Verified` appears only after
+verification passes.
 
 ## Commands
 
@@ -79,11 +86,12 @@ Verified`, and `Verified` appears only after verification passes.
 
 ## Sidebar (Explorer)
 
-- **ResolveIt** (dashboard webview) — the main entry point: project status,
-  the single primary action for the current state, AI status, proposed
-  repair cards with `Allow`/`Skip`, the apply control, and the verification
-  result. Respects VS Code themes (dark/light/high-contrast) via theme
-  variables; strict content security policy with a per-load script nonce.
+- **ResolveIt Action Hub** (webview) — the main entry point: a collapsed
+  control that expands into the radial Action Hub, plus the focused AI
+  report screen. Respects VS Code themes (dark/light/high-contrast) via
+  theme variables; strict content security policy with a per-load script
+  nonce. The previous status-dashboard modules remain as tested helpers;
+  the hub is the primary UX.
 - **ResolveIt Details** — project name, issue status, action shortcuts,
   AI status, last run.
 - **ResolveIt Diagnostics** — grouped Critical / Errors / Warnings / Info; expanding
@@ -98,11 +106,11 @@ next; long operations show progress with the current phase.
 
 ## Repair approval
 
-The dashboard is the main approval experience: each proposed repair shows
-type, target, reason, scope, risk, and the exact change, with `Allow` /
-`Skip` per card and a single `Apply Approved Repairs` control. Applying a
-plan whose diagnostics changed since planning is blocked until a fresh plan
-is generated. `ResolveIt: Repair` (and the agent `Run`) keep the legacy
+The Action Hub report screen is the main approval experience: each
+proposed repair shows type, target, reason, scope, risk, and the exact
+change, with `Allow` / `Skip` per card and a single `Apply Approved
+Changes` control. Applying a plan whose diagnostics changed since planning
+is blocked until a fresh plan is generated. `ResolveIt: Repair` (and the agent `Run`) keep the legacy
 flow: the plan is printed to the `ResolveIt` output channel, then each
 action is asked via QuickPick (`Allow` / `Deny`). Denied actions never
 execute. Manual-only items are reported, never run.
@@ -178,8 +186,10 @@ npm run validate-package
 
 - API keys only via environment variables (no settings UI for secrets).
 - Multi-root: first folder only.
-- The dashboard webview is presentation-only: strict CSP with a per-load
+- The Action Hub webview is presentation-only: strict CSP with a per-load
   nonce, no inline handlers, no `eval`, no local resource loading, an
   allowlisted command protocol, and approval messages validated against the
-  current Core plan (unknown action IDs are ignored).
+  current Core plan (unknown action IDs are ignored). It lives inside the
+  ResolveIt sidebar view (VS Code does not allow overlays on the editor);
+  expand/collapse and report navigation are handled inside the view.
 - Not published to any marketplace.
