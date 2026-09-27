@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { program } from '../src/cli/index.js';
+import { describe, it, expect, vi } from 'vitest';
+import { program, runCli } from '../src/cli/index.js';
 import { version } from '../src/version.js';
 
 describe('CLI', () => {
@@ -15,5 +15,14 @@ describe('CLI', () => {
 
   it('should parse version', () => {
     expect(version).toBe('0.0.1');
+  });
+
+  it('should not throw for the help option', () => {
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      expect(() => runCli(['--help'])).not.toThrow();
+    } finally {
+      stdoutSpy.mockRestore();
+    }
   });
 });

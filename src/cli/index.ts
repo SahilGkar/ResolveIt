@@ -157,11 +157,21 @@ function printSummary(ws: Workspace): void {
   }
 }
 
+const BENIGN_COMMANDER_CODES: ReadonlySet<string> = new Set([
+  'commander.help',
+  'commander.helpDisplayed',
+  'commander.version',
+]);
+
+function isBenignCommanderCode(code: unknown): boolean {
+  return typeof code === 'string' && BENIGN_COMMANDER_CODES.has(code);
+}
+
 export function runCli(args: string[] = process.argv.slice(2)): void {
   try {
     program.parse(args, { from: 'user' });
   } catch (err: unknown) {
-    if (err && typeof err === 'object' && 'code' in err && (err.code === 'commander.help' || err.code === 'commander.version')) {
+    if (err && typeof err === 'object' && 'code' in err && isBenignCommanderCode(err.code)) {
       return;
     }
     throw err;

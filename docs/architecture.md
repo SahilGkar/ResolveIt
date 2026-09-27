@@ -161,8 +161,8 @@ Common interface for AI providers supporting:
 
 Providers:
 - **No AI** — Deterministic fallback, no AI calls
-- **Local AI** — Locally running models (future)
-- **External AI** — API-based providers (future)
+- **Local AI** — Ollama-compatible local provider (`src/ai/providers/local.ts`)
+- **External AI** — OpenAI-compatible API provider (`src/ai/providers/external.ts`)
 
 ## Agent Lifecycle
 
@@ -234,7 +234,11 @@ interface AIProvider {
 }
 ```
 
-No implementation of specific providers (Ollama, OpenAI, etc.) in Phase 0. The interface exists to allow future implementation.
+The interface is unchanged since Phase 0. Both providers are now implemented: the
+Ollama-compatible local provider and the OpenAI-compatible external provider, selected
+by `src/ai/factory.ts` from configuration precedence. Core treats every provider
+output as untrusted input and re-validates proposed actions through the same
+permission/tool validators used for deterministic plans.
 
 ## Extension Points
 
@@ -298,6 +302,78 @@ integration defects found, and left the repository shippable:
   taxonomy, packaging parity) plus the bundle activation smoke test is the
   strongest available substitute. Manual validation was performed on Windows;
   Linux/macOS rest on unit coverage.
+
+## Phase 13 Status (Implemented): VS Code UX Redesign
+
+Phase 13 replaced the Phase 8–12 tree-only presentation with a consolidated
+dashboard. All changes are confined to `vscode/`; no Core contract moved.
+
+- **Shared operation layer** (`vscode/src/operations.ts`): one busy/cancel token
+  per operation, so every command and view reports the same state and no two
+  operations race on the same state object.
+- **Extension state** (`vscode/src/state.ts`): explicit approval, plan, execution,
+  and verification state separated. `Core` is reached only through
+  `vscode/src/core.ts`, which keeps the extension a Core client rather than a
+  second implementation.
+- **Dashboard** (`vscode/src/dashboard/`): snapshot/model/cards/render/messages
+  split into separate modules. `messages.ts` is the validation boundary for
+  webview-originated messages.
+- **Presentation utilities** (`vscode/src/ui/`): status bar, output channel, and
+  the single approval surface shared by dashboard and trees.
+
+## Phase 14 Status (Implemented, Incomplete): Action Hub
+
+Phase 14 added a radial Action Hub view. **It is not the interaction that was
+designed**, and the gap is deliberate to record here rather than paper over.
+
+### What was actually built
+
+- `vscode/src/hub/model.ts` builds a radial node graph from the current run
+  (observe → analyze → plan → approval → act → verify).
+- `vscode/src/hub/render.ts` renders that graph as SVG inside the webview.
+- `vscode/src/hub/view.ts` is a `WebviewViewProvider`.
+
+### Known gap: sidebar, not overlay
+
+`vscode/src/extension.ts:201` registers the hub as a permanent Explorer sidebar
+view (`registerWebviewViewProvider`). The intended design was an on-demand
+floating `WebviewPanel` the user opens from a command or button. No
+`createWebviewPanel` call exists in the extension. Anyone picking this up should
+treat the panel migration as the first task, not a cosmetic change.
+
+### Open defects (reproduce before fixing)
+
+| Symptom | Where / likely cause |
+|---------|---------------------|
+| View stays on `Loading ResolveIt…` | `vscode/src/hub/view.ts:33` calls `postState()` synchronously from `resolveWebviewView`, right after assigning `webview.html`. The inline script that installs the `message` listener has usually not run yet, so the render message is dropped and the placeholder survives until the next state change. |
+| Invalid `install-dependency` proposal shows `Unsupported ecosystem: undefined` | Core correctly rejects it at `src/repair/tools/install-dependency.ts:98` because the AI proposal carried no `ecosystem` parameter. The hub surfaces the raw message with no context. |
+| Node can display `Failed` together with `Approved` | `vscode/src/hub/render.ts:113-137` picks a badge class from the lifecycle but renders the approval label as a second, independently-classed badge. |
+| `Allow` / `Skip` controls render even when approval is not available | `vscode/src/hub/render.ts:140-141` renders both buttons unconditionally, ignoring lifecycle and `canApply`. |
+| A failed action can still show `approval: 'approved'` | `vscode/src/dashboard/cards.ts:129-152` sets `lifecycle: 'failed'` from execution but passes `approval` through unchanged. |
+| `Verified` is displayed too broadly | `vscode/src/hub/view.ts:86` computes `verified: verifiedKeys.size > 0` — one resolved check marks *every* executed card as `Verified`. |
+
+Core behaved correctly in every one of these cases: it rejected the invalid
+action, recorded the failure, and did not claim success. The defects are in
+presentation and state mapping, and **must not be "fixed" by loosening Core
+validation** (`src/ai/validation.ts`, the permission layer, or the tool
+validators).
+
+### F5 is not configured
+
+`vscode/.vscode/launch.json` does not exist, so the Extension Development Host
+cannot be started with F5. Packaging a VSIX is the validated path; add a launch
+configuration if the development loop is needed.
+
+### Validation performed (Phase 13/14)
+
+- Extension suite: 8 files, 135 tests, all passing (including `hub.test.ts`,
+  `dashboard.test.ts`, `views-approval.test.ts`, `mappers-state.test.ts`,
+  `bundle-smoke.test.ts`, plus the real-Core `commands.test.ts` and
+  `integration.test.ts`).
+- Extension typecheck, lint, package validation, and `vsce package` all pass.
+- Manual GUI walkthrough was performed on Windows and produced the defects
+  listed above. Interactive GUI automation is still not available, so the
+  headless suite remains the primary regression gate.
 
 ## Phase 11 Status (Implemented): Security, Docker & Audit Hardening
 
@@ -760,7 +836,8 @@ permissions, and stops before modifications. Normal execution still requires exp
 - Real dependency installs and venv creation spawn subprocesses (`shell: true` on Windows
   for `.cmd` shims); inputs are allowlist-validated but execution still depends on host tools.
 - Snapshots cover file content only (no manifest/dependency-state rollback).
-- `AuditLoggerImpl.query` is a stub returning no results.
+- `AuditLoggerImpl.query` is implemented as a bounded file-backed reader
+  (filter by action/run/outcome, capped at 200 results / 5 MiB scanned). It is not a stub.
 - The deterministic agent loop retries up to `maxIterations` (default 3); beyond that,
   unresolved runs fail with an explanation rather than retrying indefinitely.
 - Requirement parsing is static: dynamic `setup.py` logic, Gradle Kotlin/Groovy

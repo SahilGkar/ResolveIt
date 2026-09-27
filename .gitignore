@@ -8,6 +8,12 @@ dist/
 build/
 *.tsbuildinfo
 
+# Packaged extensions (generated)
+*.vsix
+
+# ResolveIt runtime state (audit log + repair snapshots, created in analyzed workspaces)
+.resolveit/
+
 # IDE
 .vscode/
 .idea/
@@ -29,6 +35,8 @@ coverage/
 .nyc_output/
 
 # Environment
+# `.env` is matched at any depth, which also excludes test fixtures like
+# tests/fixtures/integration/secrets/.env. Templates stay trackable.
 .env
 .env.local
 .env.*.local

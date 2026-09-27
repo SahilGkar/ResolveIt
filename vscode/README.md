@@ -34,22 +34,55 @@ npm test        # vitest with a mocked `vscode` API (no VS Code instance needed)
 npm run lint
 ```
 
-To create a distributable package (requires the standard tooling, not published):
+There is no `vscode/.vscode/launch.json`, so **F5 does not start an Extension
+Development Host**. Run a packaged VSIX for manual testing:
 
 ```bash
-npx @vscode/vsce package
+cd vscode
+npm run package        # -> resolveit-0.0.1.vsix
+code --install-extension resolveit-0.0.1.vsix
 ```
+
+A locally installed VSIX does not auto-update; reinstall to pick up a new build.
+
+## Current status: read before relying on the Action Hub
+
+The Action Hub was added in Phase 14 and is **not finished**. Two things to know
+up front:
+
+1. **It is a sidebar view, not the designed overlay.** `vscode/src/extension.ts:201`
+   registers `HubProvider` with `registerWebviewViewProvider`, so it is a permanent
+   Explorer entry. The original design was an on-demand floating `WebviewPanel`
+   opened on demand; no `createWebviewPanel` call exists. Migrating it is a real
+   task, not a cosmetic change.
+2. **Known defects, all in the presentation layer.** Reproduce before fixing:
+
+   | Symptom | Location |
+   |---------|----------|
+   | View can stay on `Loading ResolveIt…` indefinitely | `vscode/src/hub/view.ts:33` — `postState()` runs before the webview script installs its message listener |
+   | `Unsupported ecosystem: undefined` shown without context | Core rejection at `src/repair/tools/install-dependency.ts:98` |
+   | `Failed` shown next to `Approved` | `vscode/src/hub/render.ts:113-137` |
+   | `Allow` / `Skip` rendered when approval is not available | `vscode/src/hub/render.ts:140-141` |
+   | Failed action still reports `approval: 'approved'` | `vscode/src/dashboard/cards.ts:129-152` |
+   | `Verified` shown for every executed action | `vscode/src/hub/view.ts:86` — `verifiedKeys.size > 0` |
+
+   In every one of these cases **Core behaved correctly**: it rejected the invalid
+   action, recorded the failure, and did not claim success. Do **not** "fix" these
+   by loosening Core validation (`src/ai/validation.ts`, the permission layer, or
+   the tool validators).
+
+The other four Explorer views and every command are unaffected by these defects.
 
 ## User flow (Action Hub)
 
-The primary experience is the **ResolveIt Action Hub**: a collapsed
+The intended experience is the **ResolveIt Action Hub**: a collapsed
 `◆ ResolveIt` control that expands into a radial hub with four actions
 around the center — Analyze Project, Diagnostics, AI Report, Apply
 Changes. Each node shows its live state (`3 Diagnostics`, `AI Report
 Ready`, `1 of 2 approved`) and is disabled with a visible reason when it
 cannot run yet. Choosing the AI Report node opens a focused report screen
 (detected problem, proposed repair, reason, scope, risk, Allow/Skip,
-Apply Approved Changes, back to hub).
+Apply Approved Changes, back to hub). The intended navigation is:
 
 ```text
 Click ResolveIt → choose Analyze, Diagnostics, AI Report, or Apply
@@ -59,7 +92,8 @@ Click ResolveIt → choose Analyze, Diagnostics, AI Report, or Apply
 AI proposals are presented as `Proposed` cards and are never executed
 directly: each card moves `Proposed → Awaiting approval → Approved →
 Executing → Executed → Verified`, and `Verified` appears only after
-verification passes.
+verification passes. (The over-broad `Verified` rendering noted above is a
+presentation bug; Core's verification is still authoritative and correct.)
 
 ## Commands
 
@@ -86,12 +120,12 @@ verification passes.
 
 ## Sidebar (Explorer)
 
-- **ResolveIt Action Hub** (webview) — the main entry point: a collapsed
-  control that expands into the radial Action Hub, plus the focused AI
-  report screen. Respects VS Code themes (dark/light/high-contrast) via
-  theme variables; strict content security policy with a per-load script
-  nonce. The previous status-dashboard modules remain as tested helpers;
-  the hub is the primary UX.
+- **ResolveIt Action Hub** (webview) — see
+  [Current status](#current-status-read-before-relying-on-the-action-hub) first.
+  A collapsed control that expands into the radial Action Hub, plus the focused
+  AI report screen. Respects VS Code themes (dark/light/high-contrast) via theme
+  variables; strict content security policy with a per-load script nonce. The
+  previous status-dashboard modules remain as tested helpers.
 - **ResolveIt Details** — project name, issue status, action shortcuts,
   AI status, last run.
 - **ResolveIt Diagnostics** — grouped Critical / Errors / Warnings / Info; expanding
@@ -189,7 +223,11 @@ npm run validate-package
 - The Action Hub webview is presentation-only: strict CSP with a per-load
   nonce, no inline handlers, no `eval`, no local resource loading, an
   allowlisted command protocol, and approval messages validated against the
-  current Core plan (unknown action IDs are ignored). It lives inside the
-  ResolveIt sidebar view (VS Code does not allow overlays on the editor);
-  expand/collapse and report navigation are handled inside the view.
+  current Core plan (unknown action IDs are ignored). It is registered as a
+  permanent Explorer sidebar view, which is *not* the originally designed
+  on-demand floating panel; expand/collapse and report navigation are handled
+  inside the view.
+- The Action Hub has the open presentation defects listed under
+  [Current status](#current-status-read-before-relying-on-the-action-hub).
+- No `.vscode/launch.json`: F5 cannot start an Extension Development Host.
 - Not published to any marketplace.
