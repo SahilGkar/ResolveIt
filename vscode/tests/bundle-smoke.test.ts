@@ -30,13 +30,7 @@ describe('bundled extension artifact', () => {
     for (const id of bundled.COMMAND_IDS) {
       expect(__testState.registeredCommands.has(id)).toBe(true);
     }
-    expect(__testState.registeredViews).toEqual([
-      'resolveit.dashboard',
-      'resolveit.project',
-      'resolveit.diagnostics',
-      'resolveit.environment',
-      'resolveit.requirements',
-    ]);
+    expect(__testState.registeredViews).toEqual([]);
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     expect(__testState.outputLines.some((line) => line.includes('activated'))).toBe(true);

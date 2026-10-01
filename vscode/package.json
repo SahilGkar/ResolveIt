@@ -34,6 +34,7 @@
     "onCommand:resolveit.retryAI",
     "onCommand:resolveit.showDetails",
     "onCommand:resolveit.openSettings",
+    "onCommand:resolveit.openWorkflow",
     "workspaceContains:package.json",
     "workspaceContains:pyproject.toml",
     "workspaceContains:go.mod",
@@ -114,33 +115,12 @@
       {
         "command": "resolveit.openSettings",
         "title": "ResolveIt: Open AI Settings"
+      },
+      {
+        "command": "resolveit.openWorkflow",
+        "title": "ResolveIt: Open Workflow"
       }
     ],
-    "views": {
-      "explorer": [
-        {
-          "id": "resolveit.dashboard",
-          "name": "ResolveIt Action Hub",
-          "type": "webview"
-        },
-        {
-          "id": "resolveit.project",
-          "name": "ResolveIt Details"
-        },
-        {
-          "id": "resolveit.diagnostics",
-          "name": "ResolveIt Diagnostics"
-        },
-        {
-          "id": "resolveit.environment",
-          "name": "ResolveIt Environment"
-        },
-        {
-          "id": "resolveit.requirements",
-          "name": "ResolveIt Requirements"
-        }
-      ]
-    },
     "configuration": {
       "title": "ResolveIt",
       "properties": {
