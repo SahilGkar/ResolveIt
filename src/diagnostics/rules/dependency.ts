@@ -26,11 +26,10 @@ function createDiagnostic(
 
 function createRemediationCandidates(requirement: ProjectRequirement): RemediationCandidate[] {
   // Skip lockfile/transitive dependencies - they are managed through their manifest
-  const origin = (requirement as any).origin;
-  if (origin === 'lockfile' || origin === 'transitive') {
+  if (requirement.origin === 'lockfile' || requirement.origin === 'transitive') {
     return [];
   }
-  const indirect = (requirement as any).metadata?.indirect;
+  const indirect = requirement.metadata?.indirect;
   if (indirect === true) {
     return [];
   }

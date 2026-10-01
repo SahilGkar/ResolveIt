@@ -70,12 +70,10 @@ export class RepairPlannerImpl {
 
             // Skip lockfile/transitive dependency install actions
             if (candidate.type === 'install-dependency' && diag.requirement) {
-              const origin = (diag.requirement as any).origin;
-              if (origin === 'lockfile' || origin === 'transitive') {
+              if (diag.requirement.origin === 'lockfile' || diag.requirement.origin === 'transitive') {
                 continue;
               }
-              const indirect = (diag.requirement as any).metadata?.indirect;
-              if (indirect === true) {
+              if (diag.requirement.metadata?.indirect === true) {
                 continue;
               }
             }
