@@ -7,10 +7,14 @@ import type { CancellationTokenLike, CommandContext } from './commands.js';
 import { configToAIConfigOverrides, friendlyError, multiRootNotice } from './mappers.js';
 import { OperationCoordinator } from './operations.js';
 import { ExtensionState } from './state.js';
-import { WorkflowProvider } from './workflow/view.js';
+import { HubProvider } from './hub/view.js';
 import { vscodeApprovalDialogs } from './ui/approval.js';
 import { Logger } from './ui/output.js';
 import { createStatusBarItem, showOk } from './ui/statusBar.js';
+import { DiagnosticsTreeProvider } from './views/diagnosticsTree.js';
+import { EnvironmentTreeProvider } from './views/environmentTree.js';
+import { ProjectTreeProvider } from './views/projectTree.js';
+import { RequirementsTreeProvider } from './views/requirementsTree.js';
 import { WorkspaceService } from './workspace.js';
 
 export const COMMAND_IDS = [
@@ -32,7 +36,14 @@ export const COMMAND_IDS = [
   'resolveit.retryAI',
   'resolveit.showDetails',
   'resolveit.openSettings',
-  'resolveit.openWorkflow',
+] as const;
+
+export const VIEW_IDS = [
+  'resolveit.dashboard',
+  'resolveit.project',
+  'resolveit.diagnostics',
+  'resolveit.environment',
+  'resolveit.requirements',
 ] as const;
 
 function readAIConfig(): AIConfig {
@@ -65,7 +76,31 @@ export function activate(context: vscode.ExtensionContext): void {
   const statusItem = createStatusBarItem();
   showOk(statusItem, 'ResolveIt: ready');
 
-  const workflow = new WorkflowProvider(context, state, logger, core);
+  const projectTree = new ProjectTreeProvider(state);
+  const diagnosticsTree = new DiagnosticsTreeProvider(state, (relative) => {
+    const folders = vscode.workspace.workspaceFolders;
+    const root = folders && folders.length > 0 && folders[0] ? folders[0].uri.fsPath : '';
+    return root ? `${root}/${relative}` : relative;
+  });
+  const environmentTree = new EnvironmentTreeProvider(state);
+  const requirementsTree = new RequirementsTreeProvider(state, (relative) => {
+    const folders = vscode.workspace.workspaceFolders;
+    const root = folders && folders.length > 0 && folders[0] ? folders[0].uri.fsPath : '';
+    return root ? `${root}/${relative}` : relative;
+  });
+
+  const hub = new HubProvider(state, logger, {
+    isMultiRoot: () => (vscode.workspace.workspaceFolders ?? []).length > 1,
+    executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
+  });
+
+  const refreshViews = (): void => {
+    projectTree.refresh();
+    diagnosticsTree.refresh();
+    environmentTree.refresh();
+    requirementsTree.refresh();
+    hub.refresh();
+  };
 
   const coordinator = new OperationCoordinator();
   const workspaces = new WorkspaceService({
@@ -76,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
     onWorkspaceChanged: (root) => {
       state.bindWorkspace(root);
       showOk(statusItem, root ? `ResolveIt: watching ${root}` : 'ResolveIt: no workspace open');
-      workflow.refresh();
+      refreshViews();
       logger.info(root ? `Workspace changed; now watching ${root}. Previous state cleared.` : 'Workspace closed; state cleared.');
     },
   });
@@ -118,7 +153,7 @@ export function activate(context: vscode.ExtensionContext): void {
     dialogs: vscodeApprovalDialogs(),
     coordinator,
     workspaces,
-    refreshViews: () => workflow.refresh(),
+    refreshViews,
     getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
     reportProgress: <T,>(title: string, task: (report: (message: string) => void) => Promise<T>): Promise<T> => {
       return Promise.resolve(
@@ -162,12 +197,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const handlers = createCommandHandlers(commandContext);
 
-  // Add the new workflow command
-  handlers['resolveit.openWorkflow'] = async (): Promise<void> => {
-    workflow.show();
-  };
-
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(HubProvider.viewId, hub),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[1], projectTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[2], diagnosticsTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[3], environmentTree),
+    vscode.window.registerTreeDataProvider(VIEW_IDS[4], requirementsTree),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       workspaces.sync();
     }),
@@ -192,7 +227,7 @@ export function activate(context: vscode.ExtensionContext): void {
       .aiStatus(readAIConfig())
       .then((status) => {
         state.setAIStatus({ provider: status.provider, model: status.model, baseUrl: status.baseUrl, available: status.available });
-        workflow.refresh();
+        refreshViews();
         logger.info(`AI provider: ${status.provider} (${status.available ? 'available' : 'unavailable'}).`);
       })
       .catch((error: unknown) => {

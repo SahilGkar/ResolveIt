@@ -24,13 +24,20 @@ describe('extension activation', () => {
     for (const id of COMMAND_IDS) {
       expect(__testState.registeredCommands.has(id)).toBe(true);
     }
-    expect(__testState.registeredCommands.size).toBe(19);
+    expect(__testState.registeredCommands.size).toBe(18);
   });
 
-  it('should not register sidebar views (using WebviewPanel instead)', () => {
+  it('should register all sidebar views and the status bar', () => {
     const context = mockContext();
     activate(context as never);
-    expect(__testState.registeredViews).toEqual([]);
+    expect(__testState.registeredViews).toEqual([
+      'resolveit.dashboard',
+      'resolveit.project',
+      'resolveit.diagnostics',
+      'resolveit.environment',
+      'resolveit.requirements',
+    ]);
+    expect(context.subscriptions).toHaveLength(26);
     expect(__testState.workspaceFolderListeners).toHaveLength(1);
     expect(__testState.configChangeListeners).toHaveLength(1);
     expect(__testState.statusBarItems).toHaveLength(1);

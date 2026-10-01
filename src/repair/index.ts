@@ -68,18 +68,6 @@ export class RepairPlannerImpl {
           if (context.constraints.allowedActions.includes(candidate.type) &&
               this.riskLevelAllowed(candidate.riskLevel, context.constraints.maxRiskLevel)) {
 
-            // Skip lockfile/transitive dependency install actions
-            if (candidate.type === 'install-dependency' && diag.requirement) {
-              const origin = (diag.requirement as any).origin;
-              if (origin === 'lockfile' || origin === 'transitive') {
-                continue;
-              }
-              const indirect = (diag.requirement as any).metadata?.indirect;
-              if (indirect === true) {
-                continue;
-              }
-            }
-
             const action: RepairAction = {
               id: createActionId(),
               type: candidate.type,
