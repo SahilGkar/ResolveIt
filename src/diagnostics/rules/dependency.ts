@@ -24,19 +24,52 @@ function createDiagnostic(
   };
 }
 
+/**
+ * Ecosystems the controlled installer can actually service. A requirement from an
+ * ecosystem outside this table is still reported as a diagnostic, but no install
+ * remediation is proposed because no controlled tool exists for it.
+ */
+const ECOSYSTEM_TO_PACKAGE_MANAGER: Readonly<Record<string, string>> = {
+  node: 'npm',
+  python: 'pip',
+  rust: 'cargo',
+  go: 'go',
+  php: 'composer',
+  ruby: 'bundler',
+};
+
 function createRemediationCandidates(requirement: ProjectRequirement): RemediationCandidate[] {
-  const candidates: RemediationCandidate[] = [];
-  
-  candidates.push({
-    id: `rem-${Date.now()}-install`,
-    type: 'install-dependency',
-    description: `Install ${requirement.name}${requirement.versionConstraint ? ` ${requirement.versionConstraint}` : ''}`,
-    confidence: 0.7,
-    riskLevel: 'project-modification',
-    payload: { package: requirement.name, version: requirement.versionConstraint },
-  });
-  
-  return candidates;
+  // Lockfile/transitive/indirect packages are managed through the manifest and the
+  // package manager, never installed individually.
+  if (requirement.origin === 'lockfile' || requirement.origin === 'transitive') {
+    return [];
+  }
+  if (requirement.metadata?.indirect === true) {
+    return [];
+  }
+
+  // Without an ecosystem the installer tool rejects the action outright
+  // ("Unsupported ecosystem: undefined"), so never propose an install we cannot run.
+  const ecosystem = ECOSYSTEM_TO_PACKAGE_MANAGER[requirement.ecosystem];
+  if (!ecosystem) {
+    return [];
+  }
+
+  return [
+    {
+      id: `rem-${Date.now()}-install`,
+      type: 'install-dependency',
+      description: `Install ${requirement.name}${requirement.versionConstraint ? ` ${requirement.versionConstraint}` : ''}`,
+      confidence: 0.7,
+      riskLevel: 'project-modification',
+      payload: {
+        ecosystem,
+        package: requirement.name,
+        ...(requirement.versionConstraint ? { version: requirement.versionConstraint } : {}),
+        developmentOnly: requirement.developmentOnly === true,
+      },
+    },
+  ];
 }
 
 export const dependencyDiagnosticRule: DiagnosticRule = {

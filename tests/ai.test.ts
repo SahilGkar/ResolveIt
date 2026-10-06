@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NoAIProvider, createAIProvider, AI_PROVIDER_TYPES } from '../src/ai/providers.js';
+import { buildPlanningPrompt } from '../src/ai/prompt.js';
 import { AgentEvidence, DiagnosisResult, PlanContext, RepairPlan } from '../src/core/interfaces.js';
 
 describe('AI providers', () => {
@@ -70,5 +71,37 @@ describe('AI providers', () => {
 
   it('should throw for unknown provider type', () => {
     expect(() => createAIProvider({ type: 'unknown' as any, name: 'test', settings: {} })).toThrow('Unknown AI provider type');
+  });
+});
+
+describe('planning prompt', () => {
+  function planningContext(): Parameters<typeof buildPlanningPrompt>[0] {
+    return {
+      workspaceSummary: { rootPath: '/tmp/ws', projectCount: 1, projects: [], languages: [] },
+      environmentSummary: { runtimes: [], tools: [], dockerAvailable: false, dockerRunning: false },
+      requirements: [],
+      diagnostics: [],
+      availableTools: [
+        {
+          name: 'install-dependency',
+          description: 'Install a project dependency',
+          allowedParameters: ['ecosystem', 'package', 'version', 'developmentOnly'],
+          permissionLevel: 'project-modification',
+        },
+      ],
+      constraints: {
+        maxRiskLevel: 'project-modification',
+        allowedActions: ['install-dependency'],
+        systemModificationRequiresApproval: true,
+      },
+      previousAttempts: [],
+    };
+  }
+
+  it('should state exact parameter rules so models do not invent schema', () => {
+    const prompt = buildPlanningPrompt(planningContext());
+    expect(prompt.system).toContain('npm, pip, cargo, go, composer, bundler');
+    expect(prompt.system).toContain('there is no versionConstraint parameter');
+    expect(prompt.system).toContain('Only registered ResolveIt RepairTools may execute actions');
   });
 });

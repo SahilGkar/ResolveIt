@@ -68,6 +68,19 @@ export class RepairPlannerImpl {
           if (context.constraints.allowedActions.includes(candidate.type) &&
               this.riskLevelAllowed(candidate.riskLevel, context.constraints.maxRiskLevel)) {
 
+            // Lockfile/transitive/indirect packages are managed through the manifest
+            // and the package manager. Never propose an individual install for them,
+            // even if a diagnostic carries a stale remediation candidate.
+            if (candidate.type === 'install-dependency' && diag.requirement) {
+              const origin = diag.requirement.origin;
+              if (origin === 'lockfile' || origin === 'transitive') {
+                continue;
+              }
+              if (diag.requirement.metadata?.indirect === true) {
+                continue;
+              }
+            }
+
             const action: RepairAction = {
               id: createActionId(),
               type: candidate.type,

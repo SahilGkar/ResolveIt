@@ -62,3 +62,6 @@ export type { AgentEvent, AgentEventType, AgentEventCallback } from './events.js
 
 export { createAIPlanner } from './ai-planner.js';
 export type { AIPlannerCallbacks } from './ai-planner.js';
+
+export { detectProjectTestCommand, runProjectTest, NO_PROJECT_TEST_COMMAND_MESSAGE } from './project-test.js';
+export type { ProjectTestCommand, ProjectTestResult, ProjectTestRunner } from './project-test.js';

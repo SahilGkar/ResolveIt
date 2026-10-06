@@ -19,11 +19,29 @@ const SAFETY_INSTRUCTIONS = [
   'If no listed tool can safely address a diagnostic, omit it: a deterministic fallback handles the rest.',
 ].join('\n');
 
+// Per-tool parameter rules, stated explicitly because models otherwise guess
+// field names from the evidence (for example `versionConstraint` or a language
+// name such as `node` as the ecosystem). These hints only make valid proposals
+// more likely; Core validation still rejects anything outside the allowlist.
+const PARAMETER_HINTS: Readonly<Record<string, string>> = {
+  'install-dependency':
+    'ecosystem must be exactly one of npm, pip, cargo, go, composer, bundler (never a language or platform name); ' +
+    'package is the bare package name; version, when present, is a plain version string such as 1.2.3 (there is no versionConstraint parameter)',
+  'modify-file':
+    'path is the workspace-relative file to edit; find is the exact text to replace; replace is the new text',
+  'create-file':
+    'path is the workspace-relative file to create; content is the full file content',
+  'create-python-venv':
+    'path is the workspace-relative directory for the virtual environment',
+};
+
 export function buildPlanningPrompt(context: AIPlanningContext): PlanningPrompt {
-  const toolLines = context.availableTools.map(
-    (tool) =>
-      `- ${tool.name}: ${tool.description} (parameters: ${tool.allowedParameters.join(', ') || 'none'}; permission: ${tool.permissionLevel})`
-  );
+  const toolLines = context.availableTools.map((tool) => {
+    const base =
+      `- ${tool.name}: ${tool.description} (parameters: ${tool.allowedParameters.join(', ') || 'none'}; permission: ${tool.permissionLevel})`;
+    const hint = PARAMETER_HINTS[tool.name];
+    return hint ? `${base}\n  Parameter rules: ${hint}` : base;
+  });
 
   const system = [
     'You are the planning assistant for ResolveIt, a deterministic project environment diagnosis and resolution system.',

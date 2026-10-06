@@ -15,6 +15,20 @@ const NPM_PACKAGE_PATTERN = /^(?:@[a-z0-9~][a-z0-9~._-]*\/)?[a-z0-9~][a-z0-9~._-
 const GENERIC_PACKAGE_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?(?:\[[A-Za-z0-9_,.-]+\])?$/;
 const VERSION_PATTERN = /^[A-Za-z0-9_.\-+~^<>=!*|,\s:]+$/;
 const SHELL_METACHAR_PATTERN = /[;&|$`"'\n\r()<>!*?~#\\]/;
+// Mirrors UNSAFE_ARG_PATTERN in environment/command-runner.ts: characters the
+// safe runner refuses on any command argument. A version range such as
+// `^4.0.0` or `>=1.0.0` is a legitimate declaration (validation accepts it),
+// but it can never be placed on a command line. In that case the installer
+// runs against the bare package name and lets the package manager resolve the
+// constraint from the project manifest, which remains the source of truth.
+const RUNNER_UNSAFE_PATTERN = /[\0;&|$`'"\n\r()<>!^%]/;
+
+function commandSafeSpecifier(pkg: string, version: string | undefined, joiner: string): string {
+  if (!version || RUNNER_UNSAFE_PATTERN.test(version)) {
+    return pkg;
+  }
+  return `${pkg}${joiner}${version}`;
+}
 
 const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd: string; args: (params: InstallDependencyParameters) => string[] }> = {
   npm: {
@@ -22,8 +36,7 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
     args: (params) => {
       const base = ['install', '--save'];
       if (params.developmentOnly) base.push('--save-dev');
-      const pkg = params.version ? `${params.package}@${params.version}` : params.package;
-      base.push(pkg);
+      base.push(commandSafeSpecifier(params.package, params.version, '@'));
       return base;
     },
   },
@@ -31,8 +44,7 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
     cmd: 'pip',
     args: (params) => {
       const base = ['install'];
-      const pkg = params.version ? `${params.package}==${params.version}` : params.package;
-      base.push(pkg);
+      base.push(commandSafeSpecifier(params.package, params.version, '=='));
       return base;
     },
   },
@@ -41,16 +53,14 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
     args: (params) => {
       const base = ['add'];
       if (params.developmentOnly) base.push('--dev');
-      const pkg = params.version ? `${params.package}@${params.version}` : params.package;
-      base.push(pkg);
+      base.push(commandSafeSpecifier(params.package, params.version, '@'));
       return base;
     },
   },
   go: {
     cmd: 'go',
     args: (params) => {
-      const pkg = params.version ? `${params.package}@${params.version}` : params.package;
-      return ['get', pkg];
+      return ['get', commandSafeSpecifier(params.package, params.version, '@')];
     },
   },
   composer: {
@@ -58,8 +68,7 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
     args: (params) => {
       const base = ['require'];
       if (params.developmentOnly) base.push('--dev');
-      const pkg = params.version ? `${params.package}:${params.version}` : params.package;
-      base.push(pkg);
+      base.push(commandSafeSpecifier(params.package, params.version, ':'));
       return base;
     },
   },
@@ -67,8 +76,7 @@ const ECOSYSTEM_COMMANDS: Record<InstallDependencyParameters['ecosystem'], { cmd
     cmd: 'bundle',
     args: (params) => {
       const base = ['add'];
-      const pkg = params.version ? `${params.package}:${params.version}` : params.package;
-      base.push(pkg);
+      base.push(commandSafeSpecifier(params.package, params.version, ':'));
       return base;
     },
   },

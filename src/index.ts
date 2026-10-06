@@ -177,6 +177,15 @@ export {
 } from './requirements/index.js';
 
 export {
+  detectProjectTestCommand,
+  runProjectTest,
+  NO_PROJECT_TEST_COMMAND_MESSAGE,
+  type ProjectTestCommand,
+  type ProjectTestResult,
+  type ProjectTestRunner,
+} from './agent/project-test.js';
+
+export {
   diagnose,
   formatDiagnosticsSummary,
   diagnosticsToJSON,

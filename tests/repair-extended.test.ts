@@ -219,7 +219,7 @@ describe('repair extended coverage', () => {
         true
       );
       expect(cargo.success).toBe(true);
-      expect(cargo.output).toContain('Would run: cargo add serde@^1.0.0');
+      expect(cargo.output).toContain('Would run: cargo add serde');
 
       const go = await tool.execute(
         fileAction({

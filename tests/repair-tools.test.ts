@@ -336,7 +336,7 @@ describe('repair tools', () => {
       const result = await tool.execute(action, true);
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain('Would run: npm install --save axios@^1.7.0');
+      expect(result.output).toContain('Would run: npm install --save axios');
     });
 
     it('should dry-run npm install dev', async () => {
@@ -357,7 +357,7 @@ describe('repair tools', () => {
       const result = await tool.execute(action, true);
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain('Would run: npm install --save --save-dev jest@^29.0.0');
+      expect(result.output).toContain('Would run: npm install --save --save-dev jest');
     });
 
     it('should dry-run pip install', async () => {
@@ -378,7 +378,82 @@ describe('repair tools', () => {
       const result = await tool.execute(action, true);
 
       expect(result.success).toBe(true);
-      expect(result.output).toContain('Would run: pip install requests==^2.31.0');
+      expect(result.output).toContain('Would run: pip install requests');
+    });
+
+    it('should keep an exact version on the command line', async () => {
+      const tool = new InstallDependencyTool();
+      const action: RepairAction = {
+        id: 'action-1',
+        type: 'install-dependency',
+        permissionLevel: 'project-modification',
+        description: 'Install axios',
+        target: { filePath: workspaceRoot },
+        parameters: { ecosystem: 'npm', package: 'axios', version: '1.7.0', developmentOnly: false },
+        affectedFiles: [],
+        reversible: true,
+        riskLevel: 'project-modification',
+        prerequisites: [],
+      };
+
+      const result = await tool.execute(action, true);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('Would run: npm install --save axios@1.7.0');
+    });
+
+    it('should never emit command-line arguments the safe runner rejects', async () => {
+      const tool = new InstallDependencyTool();
+      // Ranges the tool validates but cannot place on a command line fall back
+      // to the bare package name; npm then resolves the manifest constraint.
+      // (Ranges with shell-significant characters such as `|`, `>`, `~` never
+      // get this far: they are rejected at validation.)
+      const unsafeVersions = ['^1.7.0', '^29.0.0'];
+      // Mirrors UNSAFE_ARG_PATTERN in environment/command-runner.ts.
+      const runnerUnsafeChars = [';', '&', '|', '$', '`', "'", '"', '(', ')', '<', '>', '!', '^', '%'];
+      for (const version of unsafeVersions) {
+        const action: RepairAction = {
+          id: 'action-1',
+          type: 'install-dependency',
+          permissionLevel: 'project-modification',
+          description: `Install axios ${version}`,
+          target: { filePath: workspaceRoot },
+          parameters: { ecosystem: 'npm', package: 'axios', version, developmentOnly: false },
+          affectedFiles: [],
+          reversible: true,
+          riskLevel: 'project-modification',
+          prerequisites: [],
+        };
+        const result = await tool.execute(action, true);
+        expect(result.success).toBe(true);
+        const command = result.output ?? '';
+        // The bare package name lets npm resolve the manifest constraint.
+        expect(command).toContain('npm install --save axios');
+        const args = command.slice(command.indexOf('axios'));
+        for (const char of runnerUnsafeChars) {
+          expect(args, `argument must not contain ${JSON.stringify(char)}`).not.toContain(char);
+        }
+      }
+    });
+    it('should reject shell-significant ranges at validation time', async () => {
+      const tool = new InstallDependencyTool();
+      for (const version of ['~1.7.0', '>=1.0.0', '>=1.0.0 <2.0.0', '1.0.0|2.0.0']) {
+        const action: RepairAction = {
+          id: 'action-1',
+          type: 'install-dependency',
+          permissionLevel: 'project-modification',
+          description: `Install axios ${version}`,
+          target: { filePath: workspaceRoot },
+          parameters: { ecosystem: 'npm', package: 'axios', version, developmentOnly: false },
+          affectedFiles: [],
+          reversible: true,
+          riskLevel: 'project-modification',
+          prerequisites: [],
+        };
+        const result = await tool.execute(action, true);
+        expect(result.success, version).toBe(false);
+        expect(result.error ?? '').toContain('command injection');
+      }
     });
   });
 

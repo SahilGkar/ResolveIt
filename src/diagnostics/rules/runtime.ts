@@ -27,17 +27,14 @@ function createDiagnostic(
 
 function createRemediationCandidates(requirement: ProjectRequirement): RemediationCandidate[] {
   const candidates: RemediationCandidate[] = [];
-  
+
   if (requirement.type === 'runtime-version') {
-    candidates.push({
-      id: `rem-${Date.now()}-install`,
-      type: 'install-dependency',
-      description: `Install ${requirement.name} ${requirement.versionConstraint || 'latest'}`,
-      confidence: 0.8,
-      riskLevel: 'system-modification',
-      payload: { tool: requirement.name, version: requirement.versionConstraint },
-    });
-    
+    // A runtime version mismatch is fixed by upgrading the runtime itself, which
+    // is a system-level change the user must confirm explicitly. There is
+    // deliberately no `install-dependency` candidate here: the dependency
+    // installer requires an ecosystem/package payload this requirement cannot
+    // provide, so such a candidate could never validate and would only produce
+    // "Unsupported ecosystem: undefined" failures at execution time.
     candidates.push({
       id: `rem-${Date.now()}-upgrade`,
       type: 'upgrade-runtime',
@@ -47,7 +44,7 @@ function createRemediationCandidates(requirement: ProjectRequirement): Remediati
       payload: { tool: requirement.name, version: requirement.versionConstraint },
     });
   }
-  
+
   return candidates;
 }
 

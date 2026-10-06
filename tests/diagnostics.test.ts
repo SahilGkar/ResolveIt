@@ -270,6 +270,24 @@ describe('diagnostic engine regression', () => {
       );
       expect(diags[0]?.remediationCandidates?.length).toBeGreaterThan(0);
     });
+
+    it('should never offer install-dependency remediation for a runtime mismatch', async () => {
+      const engine = createDiagnosticEngine();
+      const diags = await engine.runDiagnosticsWithContext(
+        workspace(),
+        environment({
+          runtimes: [{ name: 'node', command: 'node', version: '16.0.0', available: true }],
+        }),
+        [parsedRequirements([requirement({ name: 'node', versionConstraint: '>=99.0.0' })])]
+      );
+      expect(diags.length).toBeGreaterThan(0);
+      for (const diag of diags.filter((entry) => entry.category === 'runtime')) {
+        const installs = (diag.remediationCandidates ?? []).filter(
+          (candidate) => candidate.type === 'install-dependency'
+        );
+        expect(installs).toEqual([]);
+      }
+    });
   });
 
   describe('deduplication and ordering', () => {
