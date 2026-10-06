@@ -55,6 +55,90 @@ export interface MessageRecord {
   readonly message: string;
 }
 
+export interface WebviewPanelStub {
+  readonly viewType: string;
+  readonly title: string;
+  readonly viewColumn: unknown;
+  readonly options: { enableScripts: boolean; retainContextWhenHidden: boolean; localResourceRoots: unknown };
+  disposed: boolean;
+  revealed: number;
+  readonly posted: unknown[];
+  readonly webview: {
+    options: Record<string, unknown>;
+    /** Mirrors the real API: HTML is assigned on the webview, not the panel. */
+    html: string;
+    cspSource: string;
+    postMessage(message: unknown): Promise<boolean>;
+    asWebviewUri(uri: Uri): Uri;
+    onDidReceiveMessage(listener: (message: unknown) => void): { dispose(): void };
+  };
+  reveal(column?: unknown): void;
+  onDidDispose(listener: () => void, _thisArg?: unknown, disposables?: Array<{ dispose(): void }>): { dispose(): void };
+  dispose(): void;
+}
+
+class WebviewPanelStub implements WebviewPanelStub {
+  public disposed = false;
+  public revealed = 0;
+  public readonly posted: unknown[] = [];
+  private readonly messageListeners: Array<(message: unknown) => void> = [];
+  private readonly disposeListeners: Array<() => void> = [];
+  private readonly webviewBox: WebviewPanelStub['webview'];
+
+  constructor(
+    public readonly viewType: string,
+    public readonly title: string,
+    public readonly viewColumn: unknown,
+    public readonly options: { enableScripts: boolean; retainContextWhenHidden: boolean; localResourceRoots: unknown }
+  ) {
+    this.webviewBox = {
+      options: {},
+      html: '',
+      cspSource: `vscode-webview://mock/${viewType}`,
+      postMessage: (message: unknown): Promise<boolean> => {
+        this.posted.push(message);
+        return Promise.resolve(true);
+      },
+      asWebviewUri: (uri: Uri): Uri => uri,
+      onDidReceiveMessage: (listener: (message: unknown) => void) => {
+        this.messageListeners.push(listener);
+        return { dispose: () => undefined };
+      },
+    };
+  }
+
+  get webview(): WebviewPanelStub['webview'] {
+    return this.webviewBox;
+  }
+
+  /** Test helper: simulate the webview script running and posting a message. */
+  emit(message: unknown): void {
+    for (const listener of [...this.messageListeners]) {
+      listener(message);
+    }
+  }
+
+  reveal(): void {
+    this.revealed += 1;
+  }
+
+  onDidDispose(listener: () => void, _thisArg?: unknown, disposables?: Array<{ dispose(): void }>): { dispose(): void } {
+    this.disposeListeners.push(listener);
+    const subscription = { dispose: () => undefined };
+    if (Array.isArray(disposables)) {
+      disposables.push(subscription);
+    }
+    return subscription;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    for (const listener of [...this.disposeListeners]) {
+      listener();
+    }
+  }
+}
+
 interface TestState {
   messages: MessageRecord[];
   quickPickAnswers: Array<string | undefined>;
@@ -69,6 +153,8 @@ interface TestState {
   workspaceFolderListeners: Array<() => void>;
   configChangeListeners: Array<(event: { affectsConfiguration(section: string): boolean }) => void>;
   progressTokens: Array<{ cancel(): void }>;
+  webviewPanels: WebviewPanelStub[];
+  configurationUpdates: Array<{ key: string; value: unknown }>;
 }
 
 class StatusBarItemStub {
@@ -101,6 +187,8 @@ export const __testState: TestState = {
   workspaceFolderListeners: [],
   configChangeListeners: [],
   progressTokens: [],
+  webviewPanels: [],
+  configurationUpdates: [],
 };
 
 export function __reset(): void {
@@ -117,6 +205,8 @@ export function __reset(): void {
   __testState.workspaceFolderListeners = [];
   __testState.configChangeListeners = [];
   __testState.progressTokens = [];
+  __testState.webviewPanels = [];
+  __testState.configurationUpdates = [];
 }
 
 export const commands = {
@@ -193,17 +283,53 @@ export const window = {
     __testState.openedFiles.push(document.uri.fsPath);
     return Promise.resolve();
   },
+  createWebviewPanel(
+    viewType: string,
+    title: string,
+    showOptions: unknown,
+    options?: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: unknown }
+  ): WebviewPanelStub {
+    const panel = new WebviewPanelStub(viewType, title, showOptions, {
+      enableScripts: options?.enableScripts ?? false,
+      retainContextWhenHidden: options?.retainContextWhenHidden ?? false,
+      localResourceRoots: options?.localResourceRoots ?? [],
+    });
+    __testState.webviewPanels.push(panel);
+    return panel;
+  },
 };
+
+export enum ViewColumn {
+  Active = -1,
+  Beside = -2,
+  One = 1,
+  Two = 2,
+  Three = 3,
+}
+
+export enum ConfigurationTarget {
+  Global = 1,
+  Workspace = 2,
+  WorkspaceFolder = 3,
+}
 
 export const workspace = {
   get workspaceFolders(): TestState['workspaceFolders'] | undefined {
     return __testState.workspaceFolders.length > 0 ? __testState.workspaceFolders : undefined;
   },
-  getConfiguration(_section: string): { get<T>(key: string, defaultValue?: T): T | undefined } {
+  getConfiguration(_section: string): {
+    get<T>(key: string, defaultValue?: T): T | undefined;
+    update(key: string, value: unknown, target?: unknown): Promise<void>;
+  } {
     return {
       get: <T,>(key: string, defaultValue?: T): T | undefined => {
         const value = __testState.config[key] as T | undefined;
         return value ?? defaultValue;
+      },
+      update: (key: string, value: unknown, _target?: unknown): Promise<void> => {
+        __testState.configurationUpdates.push({ key, value });
+        __testState.config[key] = value;
+        return Promise.resolve();
       },
     };
   },

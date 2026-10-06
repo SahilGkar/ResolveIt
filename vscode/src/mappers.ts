@@ -1,5 +1,4 @@
 import type {
-  AIPlanningResult,
   Diagnostic,
   DiagnosticSeverity,
   RepairAction,
@@ -105,25 +104,6 @@ export function statusTextForActivity(activity: string): string {
   return `$(sync~spin) ResolveIt: ${activity}`;
 }
 
-export interface AIStatusDisplay {
-  readonly provider: string;
-  readonly model: string;
-  readonly baseUrl: string;
-  readonly available: boolean;
-}
-
-export function aiStatusForDisplay(
-  sanitized: { provider: string; model?: string; baseUrl?: string; apiKeyConfigured: boolean },
-  available: boolean
-): AIStatusDisplay {
-  return {
-    provider: sanitized.provider,
-    model: sanitized.model ?? '(not configured)',
-    baseUrl: sanitized.baseUrl ?? '(not configured)',
-    available,
-  };
-}
-
 export interface VSCodeAISettings {
   readonly provider?: unknown;
   readonly model?: unknown;
@@ -182,8 +162,4 @@ export function multiRootNotice(roots: ReadonlyArray<string>): string {
     `ResolveIt detected a multi-root workspace (${roots.length} folders). ` +
     `Only the first folder is analyzed in this version: ${roots[0] ?? 'none'}.`
   );
-}
-
-export function aiResultSummary(result: AIPlanningResult): string {
-  return `${result.summary} (${result.actions.length} proposed action${result.actions.length === 1 ? '' : 's'})`;
 }

@@ -2,14 +2,14 @@
 
 Thin VS Code client over ResolveIt Core. All diagnosis, repair, verification,
 planning, and AI logic lives in the core (`../src`); this extension only provides
-activation, workspace integration, UI, approval prompts, progress, and result display.
+activation, workspace integration, the workflow panel, progress, and result display.
 
 ## Architecture
 
 ```text
 VS Code Extension (this project)
-  activation, commands, dashboard webview, tree views, dialogs,
-  progress, status bar, output channel
+  activation, commands, workflow WebviewPanel, progress,
+  status bar, output channel
         │  direct TypeScript import, bundled with esbuild (`vscode` external)
         ▼
 ResolveIt Core (`../src`, via `../src/index.ts`)
@@ -18,11 +18,11 @@ ResolveIt Core (`../src`, via `../src/index.ts`)
 ```
 
 No second diagnostic/repair/AI engine exists in the extension. The Core
-`PermissionManager` remains authoritative: the extension collects approvals
-in the dashboard (`Allow`/`Skip` per repair card, then `Apply Approved
-Repairs`) and passes approved action IDs down; it cannot approve, bypass,
-or escalate anything itself. The legacy QuickPick approval remains as a
-fallback for the `Repair`/`Run` commands.
+`PermissionManager` policy remains the reference: the panel collects per-action
+decisions (`Approve All` / `Deny All` / individual toggles, then `Apply Approved
+Changes`) and passes approved action IDs down; bulk approval never escalates
+system-level actions (they always need an explicit per-action decision). The
+legacy QuickPick approval remains as a fallback for the `Repair`/`Run` commands.
 
 ## Development
 
@@ -45,60 +45,65 @@ code --install-extension resolveit-0.0.1.vsix
 
 A locally installed VSIX does not auto-update; reinstall to pick up a new build.
 
-## Current status: read before relying on the Action Hub
+## User workflow (single panel)
 
-The Action Hub was added in Phase 14 and is **not finished**. Two things to know
-up front:
-
-1. **It is a sidebar view, not the designed overlay.** `vscode/src/extension.ts:201`
-   registers `HubProvider` with `registerWebviewViewProvider`, so it is a permanent
-   Explorer entry. The original design was an on-demand floating `WebviewPanel`
-   opened on demand; no `createWebviewPanel` call exists. Migrating it is a real
-   task, not a cosmetic change.
-2. **Known defects, all in the presentation layer.** Reproduce before fixing:
-
-   | Symptom | Location |
-   |---------|----------|
-   | View can stay on `Loading ResolveIt…` indefinitely | `vscode/src/hub/view.ts:33` — `postState()` runs before the webview script installs its message listener |
-   | `Unsupported ecosystem: undefined` shown without context | Core rejection at `src/repair/tools/install-dependency.ts:98` |
-   | `Failed` shown next to `Approved` | `vscode/src/hub/render.ts:113-137` |
-   | `Allow` / `Skip` rendered when approval is not available | `vscode/src/hub/render.ts:140-141` |
-   | Failed action still reports `approval: 'approved'` | `vscode/src/dashboard/cards.ts:129-152` |
-   | `Verified` shown for every executed action | `vscode/src/hub/view.ts:86` — `verifiedKeys.size > 0` |
-
-   In every one of these cases **Core behaved correctly**: it rejected the invalid
-   action, recorded the failure, and did not claim success. Do **not** "fix" these
-   by loosening Core validation (`src/ai/validation.ts`, the permission layer, or
-   the tool validators).
-
-The other four Explorer views and every command are unaffected by these defects.
-
-## User flow (Action Hub)
-
-The intended experience is the **ResolveIt Action Hub**: a collapsed
-`◆ ResolveIt` control that expands into a radial hub with four actions
-around the center — Analyze Project, Diagnostics, AI Report, Apply
-Changes. Each node shows its live state (`3 Diagnostics`, `AI Report
-Ready`, `1 of 2 approved`) and is disabled with a visible reason when it
-cannot run yet. Choosing the AI Report node opens a focused report screen
-(detected problem, proposed repair, reason, scope, risk, Allow/Skip,
-Apply Approved Changes, back to hub). The intended navigation is:
+The primary UI is **one on-demand panel**: `ResolveIt: Open Workflow`. There are
+no sidebar views. A compact step indicator always shows where the user is:
 
 ```text
-Click ResolveIt → choose Analyze, Diagnostics, AI Report, or Apply
-  → Approve → Apply → Verify
+AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify → Done
 ```
 
-AI proposals are presented as `Proposed` cards and are never executed
-directly: each card moves `Proposed → Awaiting approval → Approved →
-Executing → Executed → Verified`, and `Verified` appears only after
-verification passes. (The over-broad `Verified` rendering noted above is a
-presentation bug; Core's verification is still authoritative and correct.)
+1. **AI Mode** — choose how ResolveIt reasons: Local AI (Ollama-compatible),
+   External AI (OpenAI-compatible), or Deterministic / No AI. The screen shows
+   the selected provider, model, endpoint, and live connection status
+   (`Check Connection` re-probes). Selecting a mode writes
+   `resolveit.ai.provider`. API keys are never shown; they stay in environment
+   variables / settings.
+2. **Project** — name, workspace path, detected ecosystems; multi-root
+   workspaces state explicitly that the first folder is analyzed.
+3. **Analyze** — runs the Core pipeline (scan → environment → requirements →
+   diagnostics) with real per-phase progress and Cancel.
+4. **Status** — requirements / issues / blocking counts. Healthy projects offer
+   Verify and Test directly.
+5. **Repair Plan** — every proposed action is a card with Action, Why, Target,
+   Scope, Risk, Expected change, and Status. The plan is labelled truthfully:
+   **AI-generated plan** only when the AI planner produced validated actions,
+   otherwise **Deterministic repair plan**. Core rejection reasons, AI
+   fallbacks, and manual-action items are shown as notices, not hidden.
+6. **Approval** — `Approve All`, `Deny All`, and per-action toggles with a
+   live `N / M approved` count. `Approve All` never approves system-level
+   actions; those need an individual decision. Nothing executes on approval.
+7. **Apply** — per-action Pending / Succeeded / Failed progress. Denied actions
+   are reported as **Skipped**, never as failed. Execution summaries
+   distinguish approved / executed / succeeded / failed / skipped.
+8. **Verify** — re-runs Core diagnostics; shows resolved / remaining.
+9. **Test Project** — detects the project's own `test` / `start` / `build`
+   npm script from a fixed allowlist and runs it through the Core safe command
+   runner. Anything else reports plainly that no safe test command exists.
+10. **Success** — repairs applied, verification passed, project test passed,
+    with the change list and Test Project / Start Over actions.
+11. **Failure** — states exactly what failed (execution, verification, or
+    project test), lists succeeded vs failed changes, and offers
+    **Return to Repair Plan**, which preserves the failure reason and the
+    user's previous decisions where still valid.
+
+Action states are mutually exclusive by construction: an action is exactly one
+of Awaiting approval, Approved, Denied, Executed, Failed, or Verified — a failed
+action never shows Approved, a denied action never shows Failed, and Verified
+requires verification to have passed. Approval controls disappear once an
+action leaves the approval stage.
+
+The panel cannot get stuck on a loading placeholder: the document paints a boot
+screen synchronously, the webview announces readiness before the host posts the
+first render, a watchdog shows a Retry error screen if the first render never
+arrives, and host-side render failures fall back to an error screen.
 
 ## Commands
 
 | Command | ID |
 |---|---|
+| ResolveIt: Open Workflow | `resolveit.openWorkflow` |
 | ResolveIt: Analyze Project | `resolveit.analyzeProject` |
 | ResolveIt: Generate Repair Plan | `resolveit.generateRepairPlan` |
 | ResolveIt: Apply Approved Repairs | `resolveit.applyApprovedRepairs` |
@@ -118,45 +123,43 @@ presentation bug; Core's verification is still authoritative and correct.)
 | ResolveIt: Repair | `resolveit.repair` |
 | ResolveIt: Verify | `resolveit.verify` |
 
-## Sidebar (Explorer)
+Review commands open the workflow at the matching stage. Applying a plan whose
+diagnostics changed since planning is blocked until a fresh plan is generated.
+`ResolveIt: Repair` (and the agent `Run`) keep the legacy flow: the plan is
+printed to the `ResolveIt` output channel, then each action is asked via
+QuickPick (`Allow` / `Deny`). Denied actions never execute. Manual-only items
+are reported, never run.
 
-- **ResolveIt Action Hub** (webview) — see
-  [Current status](#current-status-read-before-relying-on-the-action-hub) first.
-  A collapsed control that expands into the radial Action Hub, plus the focused
-  AI report screen. Respects VS Code themes (dark/light/high-contrast) via theme
-  variables; strict content security policy with a per-load script nonce. The
-  previous status-dashboard modules remain as tested helpers.
-- **ResolveIt Details** — project name, issue status, action shortcuts,
-  AI status, last run.
-- **ResolveIt Diagnostics** — grouped Critical / Errors / Warnings / Info; expanding
-  an item shows message, evidence with expected/actual values, source file (click to
-  open), and remediation candidates. Diagnostics come only from the Core engine.
-- **ResolveIt Environment** — runtimes, tools, package managers, Docker state.
-- **ResolveIt Requirements** — runtime, dependency, build-tool, and container
-  requirements with source files (click to open).
+## Repair approval and safety
 
-Every view has an empty state that explains what it means and what to do
-next; long operations show progress with the current phase.
-
-## Repair approval
-
-The Action Hub report screen is the main approval experience: each
-proposed repair shows type, target, reason, scope, risk, and the exact
-change, with `Allow` / `Skip` per card and a single `Apply Approved
-Changes` control. Applying a plan whose diagnostics changed since planning
-is blocked until a fresh plan is generated. `ResolveIt: Repair` (and the agent `Run`) keep the legacy
-flow: the plan is printed to the `ResolveIt` output channel, then each
-action is asked via QuickPick (`Allow` / `Deny`). Denied actions never
-execute. Manual-only items are reported, never run.
+- `Allow` records an approval in extension state. It does **not** execute anything.
+- `Skip` records a denial. Denied actions never execute and are reported as
+  skipped, not failed.
+- The Core re-validates each action at execution (`tool.validate()`); unknown
+  action types and invalid payloads fail honestly with the Core reason shown.
+- Lockfile / transitive / indirect dependencies never produce install actions
+  (filtered both when diagnostics are created and when the plan is built).
+- `install-dependency` versions that cannot be placed on a command line
+  (e.g. `^4.0.0`) fall back to the bare package name so the package manager
+  resolves the manifest constraint; ranges with shell-significant characters
+  are rejected at validation.
+- Runtime version mismatches propose only the honest system-level upgrade
+  path, never a dependency install that could not validate.
 
 ## AI configuration
 
 Settings (`resolveit.ai.provider|model|baseUrl|timeout`, plus
 `resolveit.maxIterations`) map onto the Core `AIConfig`; environment variables
 (`RESOLVEIT_AI_*`) take part with the usual CLI > env > defaults precedence.
-The sidebar shows provider, model, base URL, and availability — never API keys.
-Keys are accepted only from environment variables and are never stored in
-workspace settings, extension state, logs, or the repository.
+The AI Mode screen shows provider, model, endpoint, and availability — never
+API keys. Keys are accepted only from environment variables and are never
+stored in workspace settings, extension state, logs, or the repository.
+
+When AI mode is selected, planning goes through the existing AI planner
+abstraction (`createAIPlanner`): structured evidence, Core validation of every
+proposed action (`validateAIPlan`), no arbitrary shell commands, and automatic
+deterministic fallback when the provider is unavailable or every proposal is
+rejected. The UI reports which path produced the plan.
 
 ## Workspace handling
 
@@ -170,7 +173,7 @@ Workspace lifecycle details:
   change and shown implicitly by the analyzed folder.
 - Extension state is bound to the active root: switching folders or closing the
   workspace clears diagnostics, environment, requirements, plans, and run history,
-  then refreshes all views and the status bar.
+  then refreshes the panel and the status bar.
 - Every command re-resolves the workspace and discards results computed for a
   root that is no longer active, instead of displaying another workspace's data.
 
@@ -200,8 +203,8 @@ redacted (API keys, bearer tokens). Raw stack traces are never the primary UI.
 
 The extension consumes only the public Core API (`../src/index.ts`): scanners,
 diagnostic engine, repair planner/executor, verification, agent runner/events,
-permission policy types, and AI config/providers. No deep `src/...` imports, no
-duplicated engines, no shell execution for repairs. The Core remains authoritative
+permission policy types, project-test runner, and AI config/providers. No deep
+`src/...` imports, no duplicated engines, no shell execution for repairs. The Core remains authoritative
 for diagnostics, permissions, agent state, verification, and AI policy.
 
 ## Packaging validation
@@ -209,7 +212,7 @@ for diagnostics, permissions, agent state, verification, and AI policy.
 `.vscodeignore` ships only `package.json`, `dist/extension.js`, `README.md`
 (no sources, tests, mocks, maps, or `node_modules`; `uuid` is bundled).
 `npm run validate-package` deterministically checks manifest/code parity
-(commands, views, activation events, settings) plus bundle and hygiene:
+(commands, activation events, settings) plus bundle and hygiene:
 
 ```bash
 cd vscode
@@ -220,14 +223,15 @@ npm run validate-package
 
 - API keys only via environment variables (no settings UI for secrets).
 - Multi-root: first folder only.
-- The Action Hub webview is presentation-only: strict CSP with a per-load
+- The workflow panel is presentation-only: strict CSP with a per-load
   nonce, no inline handlers, no `eval`, no local resource loading, an
   allowlisted command protocol, and approval messages validated against the
-  current Core plan (unknown action IDs are ignored). It is registered as a
-  permanent Explorer sidebar view, which is *not* the originally designed
-  on-demand floating panel; expand/collapse and report navigation are handled
-  inside the view.
-- The Action Hub has the open presentation defects listed under
-  [Current status](#current-status-read-before-relying-on-the-action-hub).
+  current Core plan (unknown action IDs are ignored).
+- Action types without a registered Core tool (`upgrade-runtime`,
+  `install-tool`, `run-script`, ...) cannot auto-execute; approving one fails
+  honestly at execution with the Core reason, and the failure screen offers
+  Return to Repair Plan.
+- A trusted workspace is required (VS Code default): in Restricted Mode the
+  extension does not activate.
 - No `.vscode/launch.json`: F5 cannot start an Extension Development Host.
 - Not published to any marketplace.

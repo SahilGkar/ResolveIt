@@ -1,21 +1,51 @@
 # ResolveIt Release Checklist
 
 Validation record. The Phase 12 checklist is below; Phase 13/14 results are
-recorded in the second section. All items passed on Windows (Node 24,
-VS Code 1.138.0) unless noted. Linux/macOS rest on unit coverage.
+recorded in the second section; Phase 15 (workflow v2) results follow. All items
+passed on Windows (Node 24, VS Code 1.140.0) unless noted. Linux/macOS rest on
+unit coverage.
 
 ## Automated suites (current)
 
-- [x] Core tests: 457/457 (`npm test`: 28 files, ~84 s)
+- [x] Core tests: 478/478 (`npm test`: 30 files, includes project-test,
+      lockfile-dependency-regression, and prompt-hints suites)
 - [x] Core build (`npm run build`)
 - [x] Core typecheck (`npx tsc --noEmit`)
 - [x] Core lint (`npm run lint`)
-- [x] Extension tests: 135/135 (`cd vscode && npm test`: 8 files, ~70 s)
+- [x] Extension tests: 146/146 (`cd vscode && npm test`: 9 files, includes
+      workflow-panel, workflow-workflow, workflow-ai, and ui suites)
 - [x] Extension build (`cd vscode && npm run build`)
 - [x] Extension typecheck (`npm run typecheck`)
 - [x] Extension lint (`npm run lint`)
 - [x] Package validation (`npm run validate-package`)
 - [x] CLI `--help` exits 0 without a stack trace
+
+## Phase 15 product validation (workflow v2)
+
+- [x] Extension typecheck, lint, and package validation
+- [x] VSIX packaging (`vsce package --no-dependencies`: 5 files, ~98 KB)
+- [x] VSIX installs into real VS Code; activation verified in the extension
+      host log with no errors (`workspaceContains:package.json` trigger)
+- [x] Headless end-to-end run of the real bundle, success path: AI mode →
+      analyze → healthy status → deterministic plan → approve all → real
+      `npm install` → verify → real `npm test` → Success screen with evidence
+- [x] Headless end-to-end run of the real bundle, failure path: unexecutable
+      action → honest failure screen (no Approved badge, no fake Verified) →
+      Return to Repair Plan with the failure reason preserved
+- [x] Live AI run against local Ollama (`gemma3:4b`): provider reachable,
+      invalid proposals rejected by Core validation with reasons, honest
+      deterministic fallback
+- [x] Approval semantics: approve all / deny all / individual / partial;
+      denied actions reported as skipped (never failed); bulk approval excludes
+      system-level actions
+- [x] No permanent "Loading ResolveIt…" state: boot screen, ready handshake,
+      watchdog + Retry error screen (unit-tested, incl. a real JS parse check of
+      the emitted webview script)
+- [x] Previous workflow/P0/P1 stash preserved untouched (`git stash list`)
+- [ ] Interactive GUI clicking (still unavailable: no display automation;
+      substituted with the runs above plus real-host install/activation)
+- [ ] F5 Extension Development Host configured (no
+      `vscode/.vscode/launch.json` exists today)
 
 ## Phase 13/14 product validation
 

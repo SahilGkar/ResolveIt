@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   actionLines,
-  aiStatusForDisplay,
   configToAIConfigOverrides,
   describeAgentEvent,
   diagnosticDescription,
@@ -109,14 +108,6 @@ describe('status text', () => {
 });
 
 describe('AI status and configuration mapping', () => {
-  it('should display AI status with safe defaults', () => {
-    const display = aiStatusForDisplay({ provider: 'none' }, false);
-    expect(display.provider).toBe('none');
-    expect(display.model).toBe('(not configured)');
-    expect(display.baseUrl).toBe('(not configured)');
-    expect(display.available).toBe(false);
-  });
-
   it('should map VS Code settings to AI config overrides', () => {
     expect(configToAIConfigOverrides({})).toEqual({});
     expect(

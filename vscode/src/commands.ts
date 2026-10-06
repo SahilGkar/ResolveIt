@@ -15,6 +15,7 @@ import type { ApprovalDialogs } from './ui/approval.js';
 import { RunEventScope } from './ui/events.js';
 import type { Logger } from './ui/output.js';
 import type { WorkspaceService } from './workspace.js';
+import type { WorkflowStep } from './workflow/model.js';
 
 export interface MessageSink {
   info(message: string): void;
@@ -52,7 +53,8 @@ export interface CommandContext {
   readonly getAIConfig: () => AIConfig;
   readonly getMaxIterations: () => number;
   readonly openFile: (absolutePath: string) => Promise<void>;
-  readonly revealView?: (viewId: string) => void;
+  /** Opens (or focuses) the single ResolveIt workflow panel, optionally at a stage. */
+  readonly openWorkflow?: (step?: WorkflowStep) => void;
   readonly openSettings?: (query: string) => void;
   readonly showOutput?: () => void;
 }
@@ -232,10 +234,15 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       ctx.refreshViews();
       return;
     }
-    const succeeded = execution.results.filter((entry) => entry.result.success);
-    const failed = execution.results.filter((entry) => !entry.result.success);
+    const approvedSet = new Set(approved);
+    const succeeded = execution.results.filter(
+      (entry) => approvedSet.has(entry.action.id) && entry.result.success
+    );
+    const failed = execution.results.filter(
+      (entry) => approvedSet.has(entry.action.id) && !entry.result.success
+    );
     ctx.logger.info(
-      `Repair: ${approved.length} approved, ${execution.results.length} executed, ${succeeded.length} succeeded, ${failed.length} failed.`
+      `Repair: ${approved.length} approved, ${succeeded.length + failed.length} executed, ${succeeded.length} succeeded, ${failed.length} failed.`
     );
     if (failed.length > 0) {
       const classified = repairFailure(failed.map((entry) => entry.result.error ?? 'unknown error').join('; '));
@@ -408,7 +415,7 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       if (blocking === 0) {
         ctx.messages.info('ResolveIt: project looks healthy. No blocking diagnostics found.');
       } else {
-        ctx.messages.info(`ResolveIt: found ${blocking} blocking issue${blocking === 1 ? '' : 's'}. Review them in the dashboard.`);
+        ctx.messages.info(`ResolveIt: found ${blocking} blocking issue${blocking === 1 ? '' : 's'}. Review them in the ResolveIt workflow.`);
       }
       ctx.status.showIssues(diagnostics.length, blocking);
     } finally {
@@ -420,6 +427,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
   handlers['resolveit.generateRepairPlan'] = guarded('repair', async (root, token) => {
     if (!ctx.state.getHasScanned()) {
       ctx.messages.info('ResolveIt: analyze the project first, then generate a repair plan.');
+      // Still surface the workflow so the user can analyze from there.
+      ctx.openWorkflow?.('analyze');
       return;
     }
     ctx.state.clearLastError();
@@ -427,7 +436,9 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     ctx.status.showBusy('planning repairs', 'ResolveIt: generating repair plan');
     ctx.refreshViews();
     try {
-      const { plan, diagnostics } = await ctx.core.planRepairs(root);
+      const aiConfig = ctx.getAIConfig();
+      const { plan, diagnostics, aiUsed, aiRejections, fallbackReason, manualActions } =
+        await ctx.core.planRepairsSmart(root, aiConfig);
       token.throwIfCancelled();
       if (!ctx.workspaces.isCurrent(root)) {
         ctx.logger.warn(`Workspace changed during repair planning; discarding plan for ${root}.`);
@@ -440,19 +451,31 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
         ctx.messages.info('ResolveIt found no automated repairs. Manual action may be required.');
         ctx.logger.info('Repair planning produced no executable actions.');
         ctx.status.showIssues(diagnostics.length, ctx.state.blockingCount());
+        ctx.openWorkflow?.('status');
         return;
       }
-      ctx.state.setRepairPlan(plan, plan.description);
-      ctx.logger.info(`Repair plan (${planSummary(plan)}): ${plan.description}`);
+      ctx.state.setRepairPlan(plan, plan.description, aiUsed);
+      ctx.logger.info(`Repair plan (${aiUsed ? 'AI-generated' : 'deterministic'}, ${planSummary(plan)}): ${plan.description}`);
       for (const action of plan.actions) {
         for (const line of actionLines(action)) {
           ctx.logger.info(`  ${line}`);
         }
       }
+      if (!aiUsed && aiConfig.provider !== 'none' && fallbackReason) {
+        ctx.messages.warn(`ResolveIt AI planning fell back to deterministic planning: ${fallbackReason}`);
+      }
+      if (aiRejections.length > 0) {
+        ctx.logger.warn(`AI proposals rejected by Core validation: ${aiRejections.join('; ')}`);
+      }
+      if (manualActions.length > 0) {
+        ctx.messages.info(
+          `Manual action required: ${manualActions.map((manual) => manual.description).join('; ')}`
+        );
+      }
       ctx.messages.info(
-        `Repair plan ready: ResolveIt wants to make ${plan.actions.length} change${plan.actions.length === 1 ? '' : 's'}. Review each change in the dashboard before anything is modified.`
+        `Repair plan ready (${aiUsed ? 'AI-generated' : 'deterministic'}): ResolveIt wants to make ${plan.actions.length} change${plan.actions.length === 1 ? '' : 's'}. Review each change before anything is modified.`
       );
-      ctx.revealView?.('resolveit.dashboard');
+      ctx.openWorkflow?.('repair-plan');
     } finally {
       ctx.state.setActiveOperation(undefined);
       ctx.refreshViews();
@@ -468,8 +491,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
         return;
       }
       if (!actionId) {
-        ctx.messages.info('ResolveIt: open the dashboard to review each proposed repair.');
-        ctx.revealView?.('resolveit.dashboard');
+        ctx.messages.info('ResolveIt: open the ResolveIt workflow to review each proposed repair.');
+        ctx.openWorkflow?.('repair-plan');
         return;
       }
       if (!plan.actions.some((action) => action.id === actionId)) {
@@ -491,19 +514,25 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     const plan = ctx.state.getRepairPlan();
     if (!plan) {
       ctx.messages.info('ResolveIt: no repair plan available. Generate a repair plan first.');
+      ctx.openWorkflow?.('status');
       return;
     }
     if (ctx.state.isPlanStale()) {
       ctx.messages.warn('ResolveIt: diagnostics changed since this plan was created. Generate a fresh plan before applying.');
       ctx.logger.warn('Apply blocked: repair plan is stale relative to current diagnostics.');
+      ctx.openWorkflow?.('repair-plan');
       return;
     }
     const approved = ctx.state.getApprovedIds();
     if (approved.length === 0) {
       ctx.messages.info('ResolveIt: approve at least one repair (Allow) before applying. Nothing was executed.');
-      ctx.revealView?.('resolveit.dashboard');
+      ctx.openWorkflow?.('repair-plan');
       return;
     }
+    // The executor records a decision for every action in the plan. Actions the
+    // user did not approve come back as "Action not approved", which is a
+    // decision, not a failure, and must never be reported as one.
+    const approvedSet = new Set(approved);
     ctx.state.clearLastError();
     const before = ctx.state.getDiagnostics();
     try {
@@ -516,9 +545,19 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
         ctx.logger.warn(`Workspace changed during repair execution; discarding results for ${root}.`);
         return;
       }
-      ctx.state.setExecution({ results: execution.results, success: execution.success, timestamp: new Date() });
-      const failed = execution.results.filter((entry) => !entry.result.success);
-      const succeeded = execution.results.filter((entry) => entry.result.success);
+      ctx.state.setExecution({
+        results: execution.results.filter((entry) => approvedSet.has(entry.action.id)),
+        success: execution.results
+          .filter((entry) => approvedSet.has(entry.action.id))
+          .every((entry) => entry.result.success),
+        timestamp: new Date(),
+      });
+      const failed = execution.results.filter(
+        (entry) => approvedSet.has(entry.action.id) && !entry.result.success
+      );
+      const succeeded = execution.results.filter(
+        (entry) => approvedSet.has(entry.action.id) && entry.result.success
+      );
       ctx.logger.info(`Apply: ${approved.length} approved, ${succeeded.length} succeeded, ${failed.length} failed.`);
       if (failed.length > 0) {
         const classified = repairFailure(failed.map((entry) => entry.result.error ?? 'unknown error').join('; '));
@@ -553,16 +592,16 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
   });
 
   handlers['resolveit.reviewProblems'] = async (): Promise<void> => {
-    if (ctx.revealView) {
-      ctx.revealView('resolveit.diagnostics');
+    if (ctx.openWorkflow) {
+      ctx.openWorkflow('status');
       return;
     }
-    ctx.messages.info('ResolveIt: open the ResolveIt Diagnostics view to review each problem.');
+    ctx.messages.info('ResolveIt: open the ResolveIt workflow to review each problem.');
   };
 
   handlers['resolveit.reviewRepairs'] = async (): Promise<void> => {
-    if (ctx.revealView) {
-      ctx.revealView('resolveit.dashboard');
+    if (ctx.openWorkflow) {
+      ctx.openWorkflow('repair-plan');
       return;
     }
     const plan = ctx.state.getRepairPlan();
@@ -580,7 +619,7 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     ctx.messages.info(
       'ResolveIt: AI planning is unavailable. Deterministic diagnostics still work — review the problems found.'
     );
-    ctx.revealView?.('resolveit.dashboard');
+    ctx.openWorkflow?.('ai-mode');
   };
 
   handlers['resolveit.retryAI'] = async (): Promise<void> => {

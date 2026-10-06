@@ -3,13 +3,13 @@ import {
   createAgentRunner,
   createAIPlanner,
   createAIProviderFromConfig,
-  createDeterministicRepairPlanner,
   createDiagnosticEngine,
   createRepairExecutor,
   createRepairPlanner,
-  createVerificationEngine,
   diagnosticKey,
   isBlockingDiagnostic,
+  observeWorkspace,
+  runProjectTest,
   sanitizeAIConfig,
   scanEnvironment,
   scanRequirements,
@@ -22,6 +22,7 @@ import type {
   EnvironmentInfo,
   ParsedRequirements,
   PlannedManualAction,
+  ProjectTestResult,
   RepairAction,
   RepairExecutionOptions,
   RepairPlan,
@@ -75,7 +76,71 @@ export class CoreClient {
   }
 
   async planRepairs(workspaceRoot: string, timeout = 60000): Promise<{ plan: RepairPlan; diagnostics: ReadonlyArray<Diagnostic> }> {
+    const { plan, diagnostics } = await this.planRepairsSmart(workspaceRoot, { provider: 'none' }, timeout);
+    return { plan, diagnostics };
+  }
+
+  /**
+   * Repair planning that honestly reports which engine produced the plan.
+   *
+   * - `provider: 'none'` (or an unavailable/erroring AI provider) uses the
+   *   deterministic Core planner; `aiUsed` is false.
+   * - A configured provider goes through `createAIPlanner`, which validates the
+   *   AI response against the Core trust boundary (`validateAIPlan`) and falls
+   *   back to deterministic planning when the AI is unavailable or invalid;
+   *   `aiUsed` is true only when validated AI actions survived.
+   */
+  async planRepairsSmart(
+    workspaceRoot: string,
+    aiConfig: AIConfig,
+    timeout = 60000
+  ): Promise<{
+    plan: RepairPlan;
+    diagnostics: ReadonlyArray<Diagnostic>;
+    aiUsed: boolean;
+    aiRejections: ReadonlyArray<string>;
+    fallbackReason?: string;
+    manualActions: ReadonlyArray<PlannedManualAction>;
+  }> {
     const diagnostics = await this.runDiagnostics(workspaceRoot, timeout);
+    if (aiConfig.provider === 'none') {
+      const plan = await this.deterministicPlan(workspaceRoot, diagnostics);
+      return { plan, diagnostics, aiUsed: false, aiRejections: [], manualActions: [] };
+    }
+
+    const provider = createAIProviderFromConfig(aiConfig);
+    const aiRejections: string[] = [];
+    let fallbackReason: string | undefined;
+    const planner = createAIPlanner(
+      provider,
+      {
+        onFallback: (reason, details) => {
+          fallbackReason = details ?? reason;
+        },
+        onAIResult: (info) => {
+          aiRejections.push(...info.rejections);
+        },
+      }
+    );
+    const observation = await observeWorkspace(workspaceRoot, timeout);
+    const analysis = await analyzeObservation(observation);
+    const result = await planner({
+      analysis,
+      workspaceRoot,
+      attemptedFingerprints: new Set<string>(),
+      previousAttempts: [],
+    });
+    return {
+      plan: result.plan,
+      diagnostics,
+      aiUsed: result.aiUsed === true,
+      aiRejections,
+      ...(fallbackReason === undefined ? {} : { fallbackReason }),
+      manualActions: result.manualActions,
+    };
+  }
+
+  private async deterministicPlan(workspaceRoot: string, diagnostics: ReadonlyArray<Diagnostic>): Promise<RepairPlan> {
     const planner = createRepairPlanner();
     const workspace = await this.deps.scanWorkspace(workspaceRoot, { maxDepth: 50, maxFiles: 100000 });
     const plan = await planner.createPlan(diagnostics, {
@@ -98,7 +163,11 @@ export class CoreClient {
         requireApproval: true,
       },
     });
-    return { plan, diagnostics };
+    return plan;
+  }
+
+  testProject(workspaceRoot: string): Promise<ProjectTestResult> {
+    return runProjectTest(workspaceRoot);
   }
 
   executeApproved(
@@ -160,18 +229,6 @@ export class CoreClient {
       apiKeyConfigured: sanitized.apiKeyConfigured,
       available,
     };
-  }
-
-  createDeterministicPlanner(): ReturnType<typeof createDeterministicRepairPlanner> {
-    return createDeterministicRepairPlanner();
-  }
-
-  createVerifier(): ReturnType<typeof createVerificationEngine> {
-    return createVerificationEngine();
-  }
-
-  analyzeForTest(): typeof analyzeObservation {
-    return analyzeObservation;
   }
 
   private async runDiagnostics(workspaceRoot: string, timeout: number): Promise<ReadonlyArray<Diagnostic>> {

@@ -7,14 +7,11 @@ import type { CancellationTokenLike, CommandContext } from './commands.js';
 import { configToAIConfigOverrides, friendlyError, multiRootNotice } from './mappers.js';
 import { OperationCoordinator } from './operations.js';
 import { ExtensionState } from './state.js';
-import { HubProvider } from './hub/view.js';
+import { WorkflowProvider } from './workflow/view.js';
+import type { WorkflowStep } from './workflow/model.js';
 import { vscodeApprovalDialogs } from './ui/approval.js';
 import { Logger } from './ui/output.js';
 import { createStatusBarItem, showOk } from './ui/statusBar.js';
-import { DiagnosticsTreeProvider } from './views/diagnosticsTree.js';
-import { EnvironmentTreeProvider } from './views/environmentTree.js';
-import { ProjectTreeProvider } from './views/projectTree.js';
-import { RequirementsTreeProvider } from './views/requirementsTree.js';
 import { WorkspaceService } from './workspace.js';
 
 export const COMMAND_IDS = [
@@ -36,14 +33,7 @@ export const COMMAND_IDS = [
   'resolveit.retryAI',
   'resolveit.showDetails',
   'resolveit.openSettings',
-] as const;
-
-export const VIEW_IDS = [
-  'resolveit.dashboard',
-  'resolveit.project',
-  'resolveit.diagnostics',
-  'resolveit.environment',
-  'resolveit.requirements',
+  'resolveit.openWorkflow',
 ] as const;
 
 function readAIConfig(): AIConfig {
@@ -76,30 +66,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const statusItem = createStatusBarItem();
   showOk(statusItem, 'ResolveIt: ready');
 
-  const projectTree = new ProjectTreeProvider(state);
-  const diagnosticsTree = new DiagnosticsTreeProvider(state, (relative) => {
-    const folders = vscode.workspace.workspaceFolders;
-    const root = folders && folders.length > 0 && folders[0] ? folders[0].uri.fsPath : '';
-    return root ? `${root}/${relative}` : relative;
-  });
-  const environmentTree = new EnvironmentTreeProvider(state);
-  const requirementsTree = new RequirementsTreeProvider(state, (relative) => {
-    const folders = vscode.workspace.workspaceFolders;
-    const root = folders && folders.length > 0 && folders[0] ? folders[0].uri.fsPath : '';
-    return root ? `${root}/${relative}` : relative;
-  });
-
-  const hub = new HubProvider(state, logger, {
-    isMultiRoot: () => (vscode.workspace.workspaceFolders ?? []).length > 1,
-    executeCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
-  });
+  const workflow = new WorkflowProvider(context, state, logger, core);
 
   const refreshViews = (): void => {
-    projectTree.refresh();
-    diagnosticsTree.refresh();
-    environmentTree.refresh();
-    requirementsTree.refresh();
-    hub.refresh();
+    workflow.refresh();
   };
 
   const coordinator = new OperationCoordinator();
@@ -176,8 +146,11 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     getAIConfig: readAIConfig,
     getMaxIterations: readMaxIterations,
-    revealView: (viewId: string): void => {
-      void vscode.commands.executeCommand(`${viewId}.focus`);
+    openWorkflow: (step?: WorkflowStep): void => {
+      workflow.show();
+      if (step) {
+        workflow.goToStep(step);
+      }
     },
     openSettings: (query: string): void => {
       void vscode.commands.executeCommand('workbench.action.openSettings', query);
@@ -197,12 +170,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const handlers = createCommandHandlers(commandContext);
 
+  handlers['resolveit.openWorkflow'] = async (): Promise<void> => {
+    workflow.show();
+  };
+
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(HubProvider.viewId, hub),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[1], projectTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[2], diagnosticsTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[3], environmentTree),
-    vscode.window.registerTreeDataProvider(VIEW_IDS[4], requirementsTree),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       workspaces.sync();
     }),

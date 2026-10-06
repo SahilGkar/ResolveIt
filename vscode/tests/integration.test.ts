@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { promises as fs } from 'fs';
 import { __reset } from './vscode-mock.js';
-import { COMMAND_IDS, VIEW_IDS } from '../src/extension.js';
+import { COMMAND_IDS } from '../src/extension.js';
 import { OperationCoordinator, OperationBusyError, OperationCancelledError } from '../src/operations.js';
 import { classifyError, repairFailure, verificationFailure } from '../src/errors.js';
 import { WorkspaceService, resolveWorkspace } from '../src/workspace.js';
@@ -422,13 +422,14 @@ describe('packaging parity', () => {
       activationEvents: string[];
       contributes: {
         commands: Array<{ command: string }>;
-        views: { explorer: Array<{ id: string }> };
+        views?: { explorer: Array<{ id: string }> };
         configuration: { properties: Record<string, unknown> };
       };
     };
     expect(manifest.main).toBe('./dist/extension.js');
     expect(manifest.contributes.commands.map((command) => command.command).sort()).toEqual([...COMMAND_IDS].sort());
-    expect(manifest.contributes.views.explorer.map((view) => view.id).sort()).toEqual([...VIEW_IDS].sort());
+    // The workflow is a single on-demand panel: no permanent sidebar views may exist.
+    expect(manifest.contributes.views).toBeUndefined();
     for (const id of COMMAND_IDS) {
       expect(manifest.activationEvents).toContain(`onCommand:${id}`);
     }

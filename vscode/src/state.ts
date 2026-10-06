@@ -20,6 +20,23 @@ export interface LastVerification {
   readonly timestamp: Date;
 }
 
+export interface VerificationSummary {
+  readonly resolved: ReadonlyArray<string>;
+  readonly remaining: ReadonlyArray<string>;
+  readonly message: string;
+  readonly timestamp: Date;
+}
+
+export interface ProjectTestState {
+  readonly running: boolean;
+  readonly commandLabel?: string;
+  readonly attempted: boolean;
+  readonly success: boolean;
+  readonly exitCode: number;
+  readonly output: string;
+  readonly message: string;
+}
+
 export interface AIStatusState {
   readonly provider: string;
   readonly model: string;
@@ -55,6 +72,7 @@ export class ExtensionState {
   private aiStatus?: AIStatusState;
   private lastRun?: LastRunSummary;
   private lastVerification?: LastVerification;
+  private verificationSummary?: VerificationSummary;
   private events: AgentEvent[] = [];
   private revision = 0;
   private diagnosticsRevision = 0;
@@ -62,11 +80,16 @@ export class ExtensionState {
   private hasScanned = false;
   private activeOperation?: ActiveOperation;
   private repairPlan?: RepairPlan;
+  /** True when the current plan was produced by the AI planner (not deterministic). */
+  private repairPlanAiUsed = false;
+  /** Human-readable notes about plan provenance (fallbacks, rejections, manual items). */
+  private repairPlanNotices: ReadonlyArray<string> = [];
   private planDiagnosticsRevision = -1;
   private approvals = new Map<string, Exclude<ApprovalState, 'awaiting'>>();
   private execution?: PlanExecutionSummary;
   private lastError?: ExtensionErrorState;
   private aiSummary?: string;
+  private projectTest?: ProjectTestState;
 
   getRevision(): number {
     return this.revision;
@@ -87,10 +110,14 @@ export class ExtensionState {
     this.projectName = undefined;
     this.lastRun = undefined;
     this.lastVerification = undefined;
+    this.verificationSummary = undefined;
+    this.projectTest = undefined;
     this.events = [];
     this.hasScanned = false;
     this.activeOperation = undefined;
     this.repairPlan = undefined;
+    this.repairPlanAiUsed = false;
+    this.repairPlanNotices = [];
     this.planDiagnosticsRevision = -1;
     this.diagnosticsRevision = 0;
     this.approvals = new Map();
@@ -121,8 +148,10 @@ export class ExtensionState {
     return this.activeOperation;
   }
 
-  setRepairPlan(plan: RepairPlan, summary?: string): void {
+  setRepairPlan(plan: RepairPlan, summary?: string, aiUsed = false): void {
     this.repairPlan = plan;
+    this.repairPlanAiUsed = aiUsed;
+    this.repairPlanNotices = [];
     this.approvals = new Map();
     this.execution = undefined;
     this.planDiagnosticsRevision = this.diagnosticsRevision;
@@ -134,6 +163,8 @@ export class ExtensionState {
 
   clearRepairPlan(): void {
     this.repairPlan = undefined;
+    this.repairPlanAiUsed = false;
+    this.repairPlanNotices = [];
     this.approvals = new Map();
     this.execution = undefined;
     this.revision += 1;
@@ -141,6 +172,20 @@ export class ExtensionState {
 
   getRepairPlan(): RepairPlan | undefined {
     return this.repairPlan;
+  }
+
+  /** Whether the current plan came from the AI planner (false = deterministic). */
+  getRepairPlanAiUsed(): boolean {
+    return this.repairPlan !== undefined && this.repairPlanAiUsed;
+  }
+
+  setRepairPlanNotices(notices: ReadonlyArray<string>): void {
+    this.repairPlanNotices = [...notices];
+    this.revision += 1;
+  }
+
+  getRepairPlanNotices(): ReadonlyArray<string> {
+    return this.repairPlanNotices;
   }
 
   isPlanStale(): boolean {
@@ -196,6 +241,15 @@ export class ExtensionState {
 
   getAISummary(): string | undefined {
     return this.aiSummary;
+  }
+
+  setProjectTest(test: ProjectTestState | undefined): void {
+    this.projectTest = test;
+    this.revision += 1;
+  }
+
+  getProjectTest(): ProjectTestState | undefined {
+    return this.projectTest;
   }
 
   setDiagnostics(diagnostics: ReadonlyArray<Diagnostic>): void {
@@ -270,6 +324,44 @@ export class ExtensionState {
 
   getLastVerification(): LastVerification | undefined {
     return this.lastVerification;
+  }
+
+  /**
+   * Record a verification outcome without making it the current screen. Used when
+   * returning to the repair plan so the failure reason survives the navigation.
+   */
+  recordVerificationSummary(summary: VerificationSummary): void {
+    this.verificationSummary = summary;
+    this.revision += 1;
+  }
+
+  getVerificationSummary(): VerificationSummary | undefined {
+    return this.verificationSummary;
+  }
+
+  /**
+   * Drop the current verification result so the workflow can advance past the
+   * verify screen. The summary is retained for reporting.
+   */
+  clearLastVerification(): void {
+    if (this.lastVerification !== undefined) {
+      const current = this.lastVerification;
+      // Do not clobber a summary that was deliberately recorded first, so an
+      // explicit reason survives.
+      if (!this.verificationSummary) {
+        this.verificationSummary = {
+          resolved: [...current.resolved],
+          remaining: [...current.remaining],
+          message:
+            current.remaining.length === 0
+              ? 'Previous attempt verified successfully.'
+              : `Previous attempt did not resolve ${current.remaining.length} blocking issue(s).`,
+          timestamp: current.timestamp,
+        };
+      }
+      this.lastVerification = undefined;
+      this.revision += 1;
+    }
   }
 
   appendEvent(event: AgentEvent): void {

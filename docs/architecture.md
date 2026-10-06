@@ -326,35 +326,16 @@ dashboard. All changes are confined to `vscode/`; no Core contract moved.
 Phase 14 added a radial Action Hub view. **It is not the interaction that was
 designed**, and the gap is deliberate to record here rather than paper over.
 
-### What was actually built
-
-- `vscode/src/hub/model.ts` builds a radial node graph from the current run
-  (observe → analyze → plan → approval → act → verify).
-- `vscode/src/hub/render.ts` renders that graph as SVG inside the webview.
-- `vscode/src/hub/view.ts` is a `WebviewViewProvider`.
-
-### Known gap: sidebar, not overlay
-
-`vscode/src/extension.ts:201` registers the hub as a permanent Explorer sidebar
-view (`registerWebviewViewProvider`). The intended design was an on-demand
-floating `WebviewPanel` the user opens from a command or button. No
-`createWebviewPanel` call exists in the extension. Anyone picking this up should
-treat the panel migration as the first task, not a cosmetic change.
-
-### Open defects (reproduce before fixing)
-
-| Symptom | Where / likely cause |
-|---------|---------------------|
-| View stays on `Loading ResolveIt…` | `vscode/src/hub/view.ts:33` calls `postState()` synchronously from `resolveWebviewView`, right after assigning `webview.html`. The inline script that installs the `message` listener has usually not run yet, so the render message is dropped and the placeholder survives until the next state change. |
-| Invalid `install-dependency` proposal shows `Unsupported ecosystem: undefined` | Core correctly rejects it at `src/repair/tools/install-dependency.ts:98` because the AI proposal carried no `ecosystem` parameter. The hub surfaces the raw message with no context. |
-| Node can display `Failed` together with `Approved` | `vscode/src/hub/render.ts:113-137` picks a badge class from the lifecycle but renders the approval label as a second, independently-classed badge. |
-| `Allow` / `Skip` controls render even when approval is not available | `vscode/src/hub/render.ts:140-141` renders both buttons unconditionally, ignoring lifecycle and `canApply`. |
-| A failed action can still show `approval: 'approved'` | `vscode/src/dashboard/cards.ts:129-152` sets `lifecycle: 'failed'` from execution but passes `approval` through unchanged. |
-| `Verified` is displayed too broadly | `vscode/src/hub/view.ts:86` computes `verified: verifiedKeys.size > 0` — one resolved check marks *every* executed card as `Verified`. |
+The hub and the Phase 13 dashboard were removed in Phase 15 (see below) rather
+than patched. The presentation defects recorded here — contradictory
+Failed/Approved badges, unconditional Allow/Skip controls, over-broad Verified
+labels, denied actions counted as failures, no bulk approval, deterministic
+plans labelled as AI reports — are fixed by construction in the workflow panel,
+each pinned by a regression test.
 
 Core behaved correctly in every one of these cases: it rejected the invalid
-action, recorded the failure, and did not claim success. The defects are in
-presentation and state mapping, and **must not be "fixed" by loosening Core
+action, recorded the failure, and did not claim success. The defects were in
+presentation and state mapping, and **were not "fixed" by loosening Core
 validation** (`src/ai/validation.ts`, the permission layer, or the tool
 validators).
 
@@ -374,6 +355,56 @@ configuration if the development loop is needed.
 - Manual GUI walkthrough was performed on Windows and produced the defects
   listed above. Interactive GUI automation is still not available, so the
   headless suite remains the primary regression gate.
+
+## Phase 15 Status (Implemented): Workflow v2
+
+Phase 15 replaced all sidebar surfaces with a single on-demand `WebviewPanel`
+(`ResolveIt: Open Workflow`), rebuilt on the stable Core without changing Core
+contracts (additive changes only: project-test runner, AI prompt hints,
+install-tool range handling, lockfile/transitive filtering).
+
+- **One linear flow** (`vscode/src/workflow/`): `view.ts` (panel host, ready
+  handshake, watchdog + Retry error screen), `model.ts` (step resolution,
+  mutually exclusive action lifecycles), `render.ts` (step indicator, cards,
+  evidence screens), `commands.ts` (AI mode, analyze, plan, approve, apply,
+  verify, test), `messages.ts` (webview message allowlist/validation).
+- **Honest approval model**: Approve All / Deny All / individual toggles with a
+  live count; bulk approval never escalates system-level actions; denied actions
+  are Skipped (filtered from failure reporting in every handler); failed actions
+  never render Approved; approval controls vanish past the approval stage;
+  Verified requires execution success plus a passing verification.
+- **Truthful provenance**: `CoreClient.planRepairsSmart` routes through
+  `createAIPlanner` (validated, with deterministic fallback) when an AI provider
+  is configured, and the plan is labelled AI-generated or deterministic by the
+  actual path. Core rejection reasons, AI fallbacks, and manual-action items
+  surface as notices on the plan screen.
+- **Test Project** (`src/agent/project-test.ts`): detects the project's own
+  `test`/`start`/`build` npm script from a fixed allowlist and runs it through
+  the existing safe command runner; anything else reports plainly that no safe
+  test command exists.
+- **Correctness fixes found by end-to-end runs**: runtime-version diagnostics no
+  longer propose uninstallable `install-dependency` actions; the installer
+  translates command-line-unsafe version ranges (`^4.0.0`) to bare package
+  installs resolved from the manifest; lockfile/transitive/indirect
+  requirements produce no install actions (filtered at both the diagnostic and
+  planner layers, with regression tests).
+
+### Validation performed (Phase 15)
+
+- Core: 30 files, 473 tests, all passing; typecheck, lint, build pass.
+- Extension: 9 files, 142 tests, all passing; typecheck, lint, build,
+  `validate-package`, `vsce package` pass.
+- Headless end-to-end runs of the real built bundle against real fixture
+  projects through the panel message protocol: full success path (analyze →
+  plan → approve → real `npm install` → verify → real `npm test` → Success
+  screen) and full failure path (unexecutable action → honest failure screen →
+  Return to Repair Plan with the reason preserved).
+- Live AI run against a local Ollama model: invalid proposals rejected by Core
+  validation with reasons, deterministic fallback engaged and reported.
+- VSIX installed into a real VS Code instance: activation verified in the
+  extension host log with no errors. Interactive clicking was not performed (no
+  GUI automation in this environment); the panel protocol, rendering, and Core
+  integration are covered by the runs above.
 
 ## Phase 11 Status (Implemented): Security, Docker & Audit Hardening
 
