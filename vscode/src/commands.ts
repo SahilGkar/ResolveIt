@@ -189,7 +189,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     ctx.status.showBusy('planning repairs', 'ResolveIt: planning repairs');
     ctx.state.setActiveOperation({ kind: 'analyze', activity: 'Planning repairs…' });
     ctx.refreshViews();
-    const { plan, diagnostics } = await ctx.core.planRepairs(root);
+    const { plan, diagnostics, aiUsed, aiRejections, fallbackReason, manualActions } =
+      await ctx.core.planRepairsSmart(root, ctx.getAIConfig());
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
       ctx.logger.warn(`Workspace changed during repair planning; discarding plan for ${root}.`);
@@ -202,11 +203,22 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       ctx.refreshViews();
       return;
     }
-    ctx.logger.info(`Repair plan (${planSummary(plan)}):`);
+    ctx.logger.info(`Repair plan (${aiUsed ? 'AI-generated' : 'deterministic'}, ${planSummary(plan)}):`);
     for (const action of plan.actions) {
       for (const line of actionLines(action)) {
         ctx.logger.info(`  ${line}`);
       }
+    }
+    if (aiRejections.length > 0) {
+      ctx.logger.warn(`AI proposals rejected by Core validation: ${aiRejections.join('; ')}`);
+    }
+    if (fallbackReason) {
+      ctx.logger.warn(`AI planning fell back to deterministic planning: ${fallbackReason}`);
+    }
+    if (manualActions.length > 0) {
+      ctx.messages.info(
+        `Manual action required: ${manualActions.map((manual) => manual.description).join('; ')}`
+      );
     }
     const approved = await requestPlanApproval(plan, [], ctx.dialogs, (message) => ctx.messages.info(message));
     token.throwIfCancelled();

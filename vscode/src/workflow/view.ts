@@ -10,6 +10,15 @@ import { validateWorkflowMessage, isWorkflowNavigation } from './messages.js';
 import { buildWorkflowModel, adjacentStep, type WorkflowStep } from './model.js';
 import { createWorkflowCommandHandlers, type WorkflowCommandContext } from './commands.js';
 
+/** Stages that require workflow results; meaningless as a cursor with fresh state. */
+const POST_ANALYSIS_STEPS: ReadonlySet<WorkflowStep> = new Set([
+  'repair-plan',
+  'apply',
+  'verify',
+  'success',
+  'failed',
+]);
+
 /**
  * Webview-side runtime.
  *
@@ -310,6 +319,12 @@ export class WorkflowProvider {
     const panel = this.panel;
     if (!panel) return;
     try {
+      // After an explicit reset there is nothing to derive from, so a stale
+      // post-analysis cursor is dropped and the panel genuinely returns to
+      // AI Mode instead of landing on an arbitrary derived stage.
+      if (this.isWorkflowFresh() && POST_ANALYSIS_STEPS.has(this.cursor)) {
+        this.cursor = 'ai-mode';
+      }
       const root = this.getWorkspaceRoot();
       const folders = vscode.workspace.workspaceFolders;
       const first = folders && folders.length > 0 ? folders[0] : undefined;
@@ -354,6 +369,25 @@ export class WorkflowProvider {
   goToStep(step: WorkflowStep): void {
     this.cursor = step;
     this.postState();
+  }
+
+  /**
+   * True when no workflow progress exists at all (fresh start or after Start
+   * Over). A stale post-analysis cursor is then dropped so the panel genuinely
+   * returns to AI Mode; pre-analysis cursor positions are left alone so manual
+   * Back/Next keeps working before analysis runs.
+   */
+  private isWorkflowFresh(): boolean {
+    return (
+      !this.state.getHasScanned() &&
+      this.state.getRepairPlan() === undefined &&
+      this.state.getExecution() === undefined &&
+      this.state.getLastVerification() === undefined &&
+      this.state.getLastError() === undefined &&
+      this.state.getActiveOperation() === undefined &&
+      this.state.getProjectTest() === undefined &&
+      this.state.getProjectSmoke() === undefined
+    );
   }
 
   refresh(): void {

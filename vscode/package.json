@@ -121,6 +121,26 @@
         "title": "ResolveIt: Open Workflow"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "resolveit.repair",
+          "when": "false"
+        },
+        {
+          "command": "resolveit.run",
+          "when": "false"
+        },
+        {
+          "command": "resolveit.approveAction",
+          "when": "false"
+        },
+        {
+          "command": "resolveit.skipAction",
+          "when": "false"
+        }
+      ]
+    },
     "configuration": {
       "title": "ResolveIt",
       "properties": {

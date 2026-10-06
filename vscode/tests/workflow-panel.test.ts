@@ -255,7 +255,8 @@ describe('workflow render states', () => {
     const html = renderWorkflowHtml(model);
 
     expect(html).toContain('Project Status');
-    expect(html).toContain('Issues found: <strong>2</strong>');
+    expect(html).toContain('Informational findings: <strong>1</strong>');
+    expect(html).toContain('Issues: <strong>1</strong>');
     expect(html).toContain('Blocking issues: <strong>1</strong>');
     expect(html).toContain('data-command="workflow.generatePlan"');
   });
@@ -343,15 +344,19 @@ describe('workflow render states', () => {
     expect(html).toContain('data-command="workflow.returnToPlan"');
   });
 
-  it('reports resolution only when verification actually passes', () => {
+  it('never manufactures success from a baseline re-check', () => {
     const state = new ExtensionState();
     state.bindWorkspace('/ws');
     state.markScanned();
     state.setLastVerification({ resolved: ['a'], remaining: [], timestamp: new Date() });
 
     const model = buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: '/ws' });
-    expect(model.currentStep).toBe('success');
-    expect(renderWorkflowHtml(model)).toContain('Project Resolved');
+    // No execution happened, so this is a baseline re-check, not a completed
+    // workflow: it must stay on Status, never jump to Project Resolved.
+    expect(model.currentStep).toBe('status');
+    const html = renderWorkflowHtml(model);
+    expect(html).not.toContain('Project Resolved');
+    expect(html).toContain('Project looks healthy');
   });
 
   it('escapes untrusted project paths and error text', () => {

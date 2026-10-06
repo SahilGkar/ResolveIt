@@ -9,6 +9,7 @@ import {
   diagnosticKey,
   isBlockingDiagnostic,
   observeWorkspace,
+  runProjectSmoke,
   runProjectTest,
   sanitizeAIConfig,
   scanEnvironment,
@@ -18,15 +19,18 @@ import {
 import type {
   AgentRunResult,
   AIConfig,
+  CancellationSignal,
   Diagnostic,
   EnvironmentInfo,
   ParsedRequirements,
   PlannedManualAction,
+  ProjectSmokeResult,
   ProjectTestResult,
   RepairAction,
   RepairExecutionOptions,
   RepairPlan,
   RepairResult,
+  RunProjectSmokeOptions,
   VerificationReport,
   Workspace,
 } from '../../src/index.js';
@@ -166,8 +170,15 @@ export class CoreClient {
     return plan;
   }
 
-  testProject(workspaceRoot: string): Promise<ProjectTestResult> {
-    return runProjectTest(workspaceRoot);
+  testProject(workspaceRoot: string, signal?: CancellationSignal): Promise<ProjectTestResult> {
+    return runProjectTest(workspaceRoot, undefined, signal);
+  }
+
+  smokeProject(
+    workspaceRoot: string,
+    options: RunProjectSmokeOptions = {}
+  ): Promise<ProjectSmokeResult> {
+    return runProjectSmoke(workspaceRoot, options);
   }
 
   executeApproved(

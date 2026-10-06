@@ -17,6 +17,22 @@ export interface CommandRunnerOptions {
   readonly timeout?: number;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Cooperative cancellation. When aborted, the child process is terminated
+   * and the run resolves with `error: 'operation cancelled'` instead of hanging
+   * until the timeout. Structurally compatible with AbortSignal.
+   */
+  readonly signal?: CancellationSignal;
+}
+
+/**
+ * Minimal cancellation token shape (structurally satisfied by AbortSignal)
+ * so Core never depends on DOM lib types.
+ */
+export interface CancellationSignal {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
 }
 
 export interface CommandRunner {
@@ -156,7 +172,7 @@ export interface SafeCommandRunnerConfig {
   readonly extraEnv?: Readonly<Record<string, string>>;
 }
 
-function buildSafeEnv(extraEnv?: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+export function buildSafeEnv(extraEnv?: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && SAFE_ENV_KEYS.has(key.toUpperCase())) {
@@ -171,7 +187,7 @@ function buildSafeEnv(extraEnv?: Readonly<Record<string, string>>): NodeJS.Proce
   return env;
 }
 
-function validateSafeInvocation(
+export function validateSafeInvocation(
   config: SafeCommandRunnerConfig,
   command: string,
   args: ReadonlyArray<string>,
@@ -252,12 +268,27 @@ export function createSafeCommandRunner(config: SafeCommandRunnerConfig): Comman
         let stdoutTruncated = false;
         let stderrTruncated = false;
 
+        if (options.signal?.aborted === true) {
+          resolvePromise({
+            exitCode: -1,
+            stdout: '',
+            stderr: '',
+            timedOut: false,
+            error: 'operation cancelled',
+          });
+          return;
+        }
+
         let childProcess: ChildProcess;
         try {
           childProcess = spawn(command, [...args], {
             cwd,
             env,
             windowsHide: true,
+            // Own process group on POSIX so timeout/abort can terminate the
+            // whole tree (e.g. npm plus the test runner it spawned), not just
+            // the parent that would otherwise keep stdio pipes open forever.
+            detached: process.platform !== 'win32',
             shell: process.platform === 'win32',
           });
         } catch (err) {
@@ -273,12 +304,14 @@ export function createSafeCommandRunner(config: SafeCommandRunnerConfig): Comman
 
         const timeoutId = setTimeout(() => {
           timedOut = true;
-          try {
-            childProcess.kill('SIGTERM');
-          } catch {
-            // Ignore kill errors
-          }
+          killProcessTree(childProcess.pid);
         }, timeout);
+
+        const onAbort = (): void => {
+          clearTimeout(timeoutId);
+          killProcessTree(childProcess.pid);
+        };
+        options.signal?.addEventListener('abort', onAbort, { once: true });
 
         childProcess.stdout?.on('data', (data: Buffer) => {
           if (!stdoutTruncated) {
@@ -298,16 +331,19 @@ export function createSafeCommandRunner(config: SafeCommandRunnerConfig): Comman
 
         childProcess.on('close', (code) => {
           clearTimeout(timeoutId);
+          options.signal?.removeEventListener('abort', onAbort);
           resolvePromise({
             exitCode: code ?? -1,
             stdout: redactSecrets(stdout.trim()),
             stderr: redactSecrets(stderr.trim()),
             timedOut,
+            ...(options.signal?.aborted === true ? { error: 'operation cancelled' } : {}),
           });
         });
 
         childProcess.on('error', (err: Error) => {
           clearTimeout(timeoutId);
+          options.signal?.removeEventListener('abort', onAbort);
           resolvePromise({
             exitCode: -1,
             stdout: redactSecrets(stdout.trim()),
@@ -318,5 +354,149 @@ export function createSafeCommandRunner(config: SafeCommandRunnerConfig): Comman
         });
       });
     },
+  };
+}
+
+/**
+ * Terminate a spawned process and its entire child tree. Only ever targets a
+ * pid obtained from our own spawn call, so there is no injection surface:
+ * Windows uses taskkill with tree kill, POSIX kills the process group.
+ */
+export function killProcessTree(pid: number | undefined): void {
+  if (pid === undefined || !Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  try {
+    if (process.platform === 'win32') {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      killer.on('error', () => undefined);
+    } else {
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          // Already exited; nothing to do.
+        }
+      }
+    }
+  } catch {
+    // Best effort only; the caller must not fail because cleanup failed.
+  }
+}
+
+export interface MonitoredProcessOptions {
+  readonly cwd?: string;
+  readonly timeoutMs?: number;
+}
+
+export interface MonitoredProcess {
+  readonly pid: number | undefined;
+  readonly completion: Promise<CommandResult>;
+  killTree(): void;
+}
+
+/**
+ * Launch an already-validated command and return immediately with a handle.
+ * Used by the smoke test, which must observe a long-running server and then
+ * terminate its whole process tree. The same executable allowlist, workspace
+ * containment, argument rejection, output capping, and secret redaction apply.
+ */
+export function spawnMonitoredCommand(
+  config: SafeCommandRunnerConfig,
+  command: string,
+  args: ReadonlyArray<string>,
+  options: MonitoredProcessOptions = {}
+): MonitoredProcess | { error: string } {
+  const cwd = options.cwd;
+  const rejection = validateSafeInvocation(config, command, args, cwd);
+  if (rejection) {
+    return { error: rejection };
+  }
+  const timeout = Math.min(
+    options.timeoutMs ?? SECURITY_LIMITS.defaultCommandTimeoutMs,
+    SECURITY_LIMITS.maxCommandTimeoutMs
+  );
+  const env = buildSafeEnv(config.extraEnv);
+
+  let child: ChildProcess;
+  try {
+    child = spawn(command, [...args], {
+      cwd,
+      env,
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    return { error: redactSecrets(err instanceof Error ? err.message : String(err)) };
+  }
+
+  let stdout = '';
+  let stderr = '';
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+  child.stdout?.on('data', (data: Buffer) => {
+    if (!stdoutTruncated) {
+      const next = appendCapped(stdout, data.toString());
+      stdout = next.text;
+      stdoutTruncated = next.truncated;
+    }
+  });
+  child.stderr?.on('data', (data: Buffer) => {
+    if (!stderrTruncated) {
+      const next = appendCapped(stderr, data.toString());
+      stderr = next.text;
+      stderrTruncated = next.truncated;
+    }
+  });
+  // Detached children are not reaped automatically; listeners avoid zombies.
+  child.on('exit', () => undefined);
+
+  const completion = new Promise<CommandResult>((resolvePromise) => {
+    let timedOut = false;
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child.pid);
+    }, timeout);
+    child.on('close', (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolvePromise({
+        exitCode: code ?? -1,
+        stdout: redactSecrets(stdout.trim()),
+        stderr: redactSecrets(stderr.trim()),
+        timedOut,
+      });
+    });
+    child.on('error', (err: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolvePromise({
+        exitCode: -1,
+        stdout: redactSecrets(stdout.trim()),
+        stderr: redactSecrets(stderr.trim()),
+        timedOut: false,
+        error: redactSecrets(err.message),
+      });
+    });
+  });
+
+  return {
+    pid: child.pid,
+    completion,
+    killTree: () => killProcessTree(child.pid),
   };
 }

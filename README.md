@@ -679,24 +679,35 @@ There are no sidebar views.
 ### Beginner-friendly flow
 
 1. **Open a project folder** in VS Code (a single folder; see multi-root note below).
-2. **Open ResolveIt** â€” run **ResolveIt: Open Workflow** from the Command Palette.
-3. **Choose how ResolveIt should reason** â€” Local AI, External AI, or
-   Deterministic / No AI. The screen shows provider, model, and connection status.
+2. **Open ResolveIt** — run **ResolveIt: Open Workflow** from the Command Palette.
+3. **Choose how ResolveIt should reason** — Local AI, External AI, or
+   Deterministic / No AI. Each option shows a probed status (Connected, Not
+   reachable, Not configured, or Not checked): a mode is never shown as
+   available merely because it is selected.
 4. **Confirm the project** and click **Analyze Project**.
-5. **Review the status** â€” requirements, issues, blocking counts.
-6. **Generate a repair plan** â€” labelled truthfully as an **AI-generated plan**
+5. **Review the status** — requirements, informational findings, issues
+   (warning and above), and blocking issues. Informational findings are
+   inventory notes, not problems.
+6. **Generate a repair plan** — labelled truthfully as an **AI-generated plan**
    or a **Deterministic repair plan**.
-7. **Review each proposed repair** â€” action, why, target, scope, risk, expected
+7. **Review each proposed repair** — action, why, target, scope, risk, expected
    change, status.
-8. **Approve changes** â€” `Approve All`, `Deny All`, or individual toggles.
-   System-level actions always need an individual decision.
-9. **Apply approved changes** â€” denied actions are reported as skipped, never
+8. **Approve changes** — `Approve All`, `Deny All`, or individual toggles.
+   System-level actions always need an individual decision. Returning to the
+   plan after a failure carries your previous decisions forward for equivalent
+   actions; new actions always start awaiting approval.
+9. **Apply approved changes** — denied actions are reported as skipped, never
    as failed.
 10. **Verification runs automatically** right after execution.
-11. **Test the project** â€” the project's own test script runs through the safe
-    runner.
-12. **Success** shows the evidence, or **Failure** shows exactly what failed with
-    a **Return to Repair Plan** action that preserves the failure reason.
+11. **Test the project** (`Test Project` runs the project's own terminating
+    test command, e.g. `npm test`) and/or **Run / Smoke Test** (launches the
+    app's `dev`/`start` command, waits for localhost readiness, then always
+    terminates the server). A server that stays alive is a smoke-test success,
+    never a timeout failure.
+12. **Success** shows the evidence (repairs, verification, test/smoke results),
+    or **Failure** lists every failure category with its evidence and a
+    **Return to Repair Plan** action that preserves the failure reason and
+    your previous decisions.
 
 ### Commands
 
@@ -760,7 +771,8 @@ Diagnostic â†’ proposed action â†’ Approve All / Deny All / individual
 - Actions whose IDs are not in the current plan are ignored (stale/hostile messages
   from the webview are dropped and logged).
 - The legacy `ResolveIt: Repair` and `ResolveIt: Run ResolveIt` commands keep the
-  older flow: the plan is printed to the `ResolveIt` output channel, then each action
+  older flow (hidden from the Command Palette; still invocable programmatically):
+  the plan is printed to the `ResolveIt` output channel, then each action
   is confirmed via QuickPick (`Allow` / `Deny`).
 - Manual-only items (runtime upgrades, toolchain installs, Docker findings) are
   reported with instructions and **never** run.
@@ -802,7 +814,34 @@ Verification is not optional and never inferred from an exit code.
 - In the UI, `Verified` is shown only after verification passes, and only for
   actions whose execution succeeded. Denied actions show `Denied`, failed
   actions show `Failed`, and approval controls disappear once an action leaves
-  the approval stage.
+  the approval stage. `Verified` reflects project-level verification (no
+  remaining blocking diagnostics), which the UI states explicitly rather than
+  claiming per-action proof.
+- In the UI, a baseline re-check of an untouched project stays on Status: it
+  never manufactures the final Success screen. Success requires applied
+  changes, clean verification, and a passed test or smoke check.
+
+---
+
+## Test Project vs Run / Smoke Test
+
+Two different questions, two different capabilities. They are never conflated.
+
+**Test Project** runs the project's own *terminating* test command and grades
+its exit code: `npm test`, `pytest -q`, `cargo test`, `go test ./...`,
+`dotnet test`, `mvn test`, or `gradle test`, detected from project files only.
+Development servers are never test commands. If nothing safe is detected, the
+UI says so plainly instead of implying a test ran. Cancellation terminates the
+process and is reported as cancelled, never as a pass or failure.
+
+**Run / Smoke Test** answers "does the application actually start?" for Node
+projects: it detects the `dev` script (preferred) or `start` script, launches
+it, waits up to ~60 seconds for localhost readiness (an explicitly declared
+port, newly bound ports, then common defaults), performs an HTTP readiness
+check, and then **always terminates the whole process tree**. A server that
+stays alive and responds is success; a server that never becomes reachable, or
+exits immediately, is an honest failure — never a timeout graded as a test
+result.
 
 ---
 
@@ -966,10 +1005,10 @@ Run on Windows 11, Node v24.13.0, npm 11.6.2, during this handoff:
 | Core build | `npm run build` | pass |
 | Core typecheck | `npx tsc --noEmit` | pass |
 | Core lint | `npm run lint` | pass, no findings |
-| Core tests | `npm test` | **30 files, 478 tests, all passing** |
+| Core tests | `npm test` | **30 files, 488 tests, all passing** |
 | Extension build | `vscode/ npm run build` | pass (typecheck + esbuild bundle) |
 | Extension lint | `vscode/ npm run lint` | pass, no findings |
-| Extension tests | `vscode/ npm test` | **9 files, 146 tests, all passing** (includes rebuild) |
+| Extension tests | `vscode/ npm test` | **9 files, 169 tests, all passing** (includes rebuild) |
 | Package validation | `vscode/ npm run validate-package` | pass |
 | VSIX packaging | `vscode/ npm run package` | pass â€” `resolveit-0.0.1.vsix`, 5 files, ~98 KB |
 | CLI `--help` / `--version` | `node dist/cli/index.js --help` | exit 0, no stack trace |
@@ -1152,7 +1191,7 @@ ResolveIt/
 â”‚   â”œâ”€â”€ cli/                    # commander CLI
 â”‚   â”œâ”€â”€ index.ts                # public Core API (the extension's only entry)
 â”‚   â””â”€â”€ version.ts
-â”œâ”€â”€ tests/                      # 30 files, 478 tests
+â”œâ”€â”€ tests/                      # 30 files, 488 tests
 â”‚   â”œâ”€â”€ fixtures/
 â”‚   â”‚   â”œâ”€â”€ ecosystems/         # 20 parser fixtures
 â”‚   â”‚   â”œâ”€â”€ integration/        # 13 release-matrix fixtures
@@ -1173,7 +1212,7 @@ ResolveIt/
 â”‚   â”‚   â”œâ”€â”€ mappers.ts          # model <-> UI mapping
 â”‚   â”‚   â”œâ”€â”€ errors.ts           # error classification
 â”‚   â”‚   â””â”€â”€ extension.ts        # activation entry point
-â”‚   â”œâ”€â”€ tests/                  # 9 files, 146 tests (vscode API mocked)
+â”‚   â”œâ”€â”€ tests/                  # 9 files, 169 tests (vscode API mocked)
 â”‚   â”œâ”€â”€ scripts/                # validate-package.mjs
 â”‚   â””â”€â”€ dist/                   # bundle output (generated, ignored)
 â”œâ”€â”€ docs/
@@ -1345,7 +1384,7 @@ Phase 15 workflow rebuild:
   multi-layer validation, explicit prompt schema hints, and deterministic fallback
 - **VS Code extension** â€” thin client, 19 commands, one on-demand workflow panel,
   operation coordination, error taxonomy, packaging validation
-- **Tests** â€” 473 core tests across 30 files, 142 extension tests across 9 files,
+- **Tests** — 488 core tests across 30 files, 169 extension tests across 9 files,
   integration and security fixtures, mocked VS Code API
 - **CLI** â€” 7 commands (`scan`, `environment`, `requirements`, `diagnose`, `repair`,
   `run`, `ai`) plus `version` / `help`, with human and JSON output, dry-run, and

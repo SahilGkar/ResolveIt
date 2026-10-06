@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import type { ExtensionState } from '../state.js';
 import type { CoreClient } from '../core.js';
 import type { AIConfig } from '../../../src/index.js';
-import { OperationCoordinator, type OperationKind, type OperationToken } from '../operations.js';
+import { actionFingerprint } from '../../../src/index.js';
+import { OperationCoordinator, createCancellationSource, type OperationKind, type OperationToken } from '../operations.js';
 import { classifyError, repairFailure, verificationFailure } from '../errors.js';
 import type { ClassifiedError } from '../errors.js';
 import type { Logger } from '../ui/output.js';
@@ -51,7 +52,14 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
   const coordinator = new OperationCoordinator();
   const handlers: Record<string, (actionId?: string, step?: string, data?: unknown) => Promise<void>> = {};
 
-  const guarded = (kind: OperationKind, task: (root: string, token: OperationToken) => Promise<void>) => {
+  const guarded = (
+    kind: OperationKind,
+    task: (
+      root: string,
+      token: OperationToken,
+      cancelToken: { readonly isCancellationRequested: boolean; onCancellationRequested(callback: () => void): void }
+    ) => Promise<void>
+  ) => {
     return async (): Promise<void> => {
       const root = requireRoot(ctx);
       if (!root) return;
@@ -63,7 +71,7 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
             token.onCancellationRequested(() => {
               coordinator.cancel(kind, root);
             });
-            await task(root, opToken);
+            await task(root, opToken, token);
           });
         });
       } catch (error) {
@@ -369,16 +377,41 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
     }
   });
 
-  handlers['workflow.testProject'] = async (): Promise<void> => {    const root = requireRoot(ctx);
-    if (!root) return;
+  handlers['workflow.testProject'] = guarded('test', async (root, token, cancelToken) => {
+    const cancellation = createCancellationSource();
+    cancelToken.onCancellationRequested(() => {
+      cancellation.abort();
+      coordinator.cancel('test', root);
+    });
 
-    ctx.state.setProjectTest({ running: true, attempted: false, success: false, exitCode: -1, output: '', message: 'Testing project…' });
-    ctx.postMessage({ type: 'refresh' });
+    ctx.state.setProjectTest({ running: true, attempted: false, success: false, exitCode: -1, output: '', message: 'Running project tests…' });
 
     try {
-      // Runs the project's own allowlisted npm script through the Core safe command
-      // runner. It never invents a command and never repairs anything.
-      const result = await ctx.core.testProject(root);
+      // Runs the project's own terminating test command through the Core safe
+      // command runner. It never invents a command and never repairs anything.
+      // Development servers are NOT test commands; see workflow.smokeTest.
+      const result = await ctx.core.testProject(root, cancellation.signal);
+      if (cancelToken.isCancellationRequested || token.signal.cancelled) {
+        // Cancellation won the race: record it honestly instead of throwing
+        // past the state update, which would leave the UI stuck on Running.
+        ctx.state.setProjectTest({
+          running: false,
+          ...(result.command ? { commandLabel: result.command.label } : {}),
+          attempted: result.attempted,
+          success: false,
+          exitCode: result.exitCode,
+          output: '',
+          message: 'Project test was cancelled before it finished.',
+          cancelled: true,
+        });
+        ctx.showMessage('ResolveIt: project test was cancelled before it finished.');
+        return;
+      }
+      token.throwIfCancelled();
+      if (root !== ctx.getWorkspaceRoot()) {
+        ctx.logger.warn(`Workspace changed during project test; discarding results for ${root}.`);
+        return;
+      }
 
       ctx.state.setProjectTest({
         running: false,
@@ -388,9 +421,12 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
         exitCode: result.exitCode,
         output: [result.stdout, result.stderr].filter((part) => part.length > 0).join('\n').slice(0, 4000),
         message: result.message,
+        ...(result.cancelled === true ? { cancelled: true as const } : {}),
       });
 
-      if (!result.attempted) {
+      if (result.cancelled === true) {
+        ctx.showMessage('ResolveIt: project test was cancelled before it finished.');
+      } else if (!result.attempted) {
         ctx.showWarning(result.message);
       } else if (result.success) {
         ctx.showMessage(`${result.command?.label ?? 'Project test'}: ${result.message}`);
@@ -399,6 +435,7 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
       }
       ctx.logger.info(`Project test (${result.command?.label ?? 'none'}): ${result.message}`);
     } catch (error) {
+      token.throwIfCancelled();
       const classified = classifyError(error, 'ResolveIt project test');
       ctx.state.setProjectTest({
         running: false,
@@ -411,8 +448,99 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
       ctx.showError(classified.userMessage);
       ctx.logger.error(classified.logDetail);
     }
-    ctx.postMessage({ type: 'refresh' });
-  };
+  });
+
+  handlers['workflow.smokeTest'] = guarded('test', async (root, token, cancelToken) => {
+    const cancellation = createCancellationSource();
+    cancelToken.onCancellationRequested(() => {
+      cancellation.abort();
+      coordinator.cancel('test', root);
+    });
+
+    ctx.state.setProjectSmoke({
+      running: true,
+      attempted: false,
+      started: false,
+      listening: false,
+      responded: false,
+      success: false,
+      output: '',
+      message: 'Starting the application…',
+    });
+
+    try {
+      // Launches the project's own dev/start command, waits for bounded
+      // localhost readiness, then always terminates the whole process tree.
+      // A server that stays alive is the success case here, never a timeout.
+      const result = await ctx.core.smokeProject(root, { signal: cancellation.signal });
+      if (cancelToken.isCancellationRequested || token.signal.cancelled) {
+        // Cancellation won the race: record it honestly instead of throwing
+        // past the state update, which would leave the UI stuck on Running.
+        ctx.state.setProjectSmoke({
+          running: false,
+          ...(result.command ? { commandLabel: result.command.label } : {}),
+          attempted: result.attempted,
+          started: result.started,
+          listening: result.listening,
+          responded: false,
+          success: false,
+          ...(result.port === undefined ? {} : { port: result.port }),
+          ...(result.url === undefined ? {} : { url: result.url }),
+          output: '',
+          message: 'Smoke test was cancelled before it finished.',
+          cancelled: true,
+        });
+        ctx.showMessage('ResolveIt: smoke test was cancelled before it finished.');
+        return;
+      }
+      token.throwIfCancelled();
+      if (root !== ctx.getWorkspaceRoot()) {
+        ctx.logger.warn(`Workspace changed during smoke test; discarding results for ${root}.`);
+        return;
+      }
+
+      ctx.state.setProjectSmoke({
+        running: false,
+        ...(result.command ? { commandLabel: result.command.label } : {}),
+        attempted: result.attempted,
+        started: result.started,
+        listening: result.listening,
+        responded: result.responded,
+        success: result.success,
+        ...(result.port === undefined ? {} : { port: result.port }),
+        ...(result.url === undefined ? {} : { url: result.url }),
+        output: result.output,
+        message: result.message,
+        ...(result.cancelled === true ? { cancelled: true as const } : {}),
+      });
+
+      if (result.cancelled === true) {
+        ctx.showMessage('ResolveIt: smoke test was cancelled before it finished.');
+      } else if (!result.attempted) {
+        ctx.showWarning(result.message);
+      } else if (result.success) {
+        ctx.showMessage(`${result.command?.label ?? 'Smoke test'}: ${result.message}`);
+      } else {
+        ctx.showWarning(`${result.command?.label ?? 'Smoke test'}: ${result.message}`);
+      }
+      ctx.logger.info(`Smoke test (${result.command?.label ?? 'none'}): ${result.message}`);
+    } catch (error) {
+      token.throwIfCancelled();
+      const classified = classifyError(error, 'ResolveIt smoke test');
+      ctx.state.setProjectSmoke({
+        running: false,
+        attempted: false,
+        started: false,
+        listening: false,
+        responded: false,
+        success: false,
+        output: '',
+        message: classified.userMessage,
+      });
+      ctx.showError(classified.userMessage);
+      ctx.logger.error(classified.logDetail);
+    }
+  });
 
   handlers['workflow.returnToPlan'] = async (): Promise<void> => {
     // Preserve why the previous attempt failed before dropping the result, so the
@@ -429,17 +557,67 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
         timestamp: verification.timestamp,
       });
     }
+    // Snapshot previous decisions by stable fingerprint BEFORE re-planning wipes
+    // the approvals map, so equivalent actions keep their decision.
+    const previousPlan = ctx.state.getRepairPlan();
+    const previousDecisions = new Map<string, boolean>();
+    if (previousPlan) {
+      for (const action of previousPlan.actions) {
+        const decision = ctx.state.getApproval(action.id);
+        if (decision !== 'awaiting') {
+          previousDecisions.set(actionFingerprint(action), decision === 'approved');
+        }
+      }
+    }
     // Clearing the verification result is what allows the workflow to leave the
     // verify/failed screen and reach the repair plan again.
     ctx.state.clearLastVerification();
     ctx.state.clearLastError();
+    const previousTest = ctx.state.getProjectTest();
+    const previousSmoke = ctx.state.getProjectSmoke();
+    if (
+      ctx.state.getVerificationSummary() === undefined &&
+      ((previousTest !== undefined && previousTest.attempted && !previousTest.success) ||
+        (previousSmoke !== undefined && previousSmoke.attempted && !previousSmoke.success))
+    ) {
+      // A failed test or smoke run is also a reason to be back on the plan;
+      // keep it visible instead of dropping it with the cleared state.
+      const reasons: string[] = [];
+      if (previousTest !== undefined && previousTest.attempted && !previousTest.success) {
+        reasons.push(`project test failed: ${previousTest.message}`);
+      }
+      if (previousSmoke !== undefined && previousSmoke.attempted && !previousSmoke.success) {
+        reasons.push(`smoke test failed: ${previousSmoke.message}`);
+      }
+      ctx.state.recordVerificationSummary({
+        resolved: [],
+        remaining: [],
+        message: `Previous attempt did not pass validation (${reasons.join('; ')}).`,
+        timestamp: new Date(),
+      });
+    }
     ctx.state.setProjectTest(undefined);
+    ctx.state.setProjectSmoke(undefined);
 
     const root = ctx.getWorkspaceRoot();
     if (root && ctx.state.getHasScanned()) {
       const { plan, aiUsed } = await ctx.core.planRepairsSmart(root, ctx.getAIConfig());
       if (plan.actions.length > 0) {
         ctx.state.setRepairPlan(plan, plan.description, aiUsed);
+        // Carry forward decisions only for equivalent actions. New or changed
+        // actions stay Awaiting approval; nothing is ever auto-approved here
+        // that the user did not previously decide on.
+        let carried = 0;
+        for (const action of plan.actions) {
+          const decision = previousDecisions.get(actionFingerprint(action));
+          if (decision !== undefined) {
+            ctx.state.setApproval(action.id, decision);
+            carried += 1;
+          }
+        }
+        if (carried > 0) {
+          ctx.logger.info(`Return to repair plan: carried over ${carried} previous decision(s).`);
+        }
       } else {
         ctx.state.clearRepairPlan();
         ctx.showMessage('ResolveIt found no automated repairs for the remaining problems.');
@@ -457,10 +635,9 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
   };
 
   handlers['workflow.restart'] = async (): Promise<void> => {
-    const root = ctx.getWorkspaceRoot();
-    if (root) {
-      ctx.state.bindWorkspace(root);
-    }
+    ctx.state.resetWorkflow();
+    ctx.state.clearLastError();
+    ctx.logger.info('Workflow restarted: all plan, approval, execution, verification, and test state cleared.');
     ctx.postMessage({ type: 'refresh' });
   };
 

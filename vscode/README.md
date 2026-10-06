@@ -51,21 +51,25 @@ The primary UI is **one on-demand panel**: `ResolveIt: Open Workflow`. There are
 no sidebar views. A compact step indicator always shows where the user is:
 
 ```text
-AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify → Done
+AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify → Test → Done
 ```
 
+There are no generic Back/Next controls: every screen offers only the actions
+that actually transition from the current state.
+
 1. **AI Mode** — choose how ResolveIt reasons: Local AI (Ollama-compatible),
-   External AI (OpenAI-compatible), or Deterministic / No AI. The screen shows
-   the selected provider, model, endpoint, and live connection status
-   (`Check Connection` re-probes). Selecting a mode writes
-   `resolveit.ai.provider`. API keys are never shown; they stay in environment
-   variables / settings.
+   External AI (OpenAI-compatible), or Deterministic / No AI. Each option shows
+   a probed status — Connected, Not reachable, Not configured, or Not checked —
+   and "Connected" is only ever shown after a successful probe. Selecting a mode
+   writes `resolveit.ai.provider`. API keys are never shown; they stay in
+   environment variables / settings.
 2. **Project** — name, workspace path, detected ecosystems; multi-root
    workspaces state explicitly that the first folder is analyzed.
 3. **Analyze** — runs the Core pipeline (scan → environment → requirements →
    diagnostics) with real per-phase progress and Cancel.
-4. **Status** — requirements / issues / blocking counts. Healthy projects offer
-   Verify and Test directly.
+4. **Status** — requirements, informational findings, issues (warning and
+   above), and blocking issues. Informational findings are inventory notes, not
+   problems. Healthy projects offer Re-check, Test, and Smoke actions directly.
 5. **Repair Plan** — every proposed action is a card with Action, Why, Target,
    Scope, Risk, Expected change, and Status. The plan is labelled truthfully:
    **AI-generated plan** only when the AI planner produced validated actions,
@@ -74,19 +78,31 @@ AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify 
 6. **Approval** — `Approve All`, `Deny All`, and per-action toggles with a
    live `N / M approved` count. `Approve All` never approves system-level
    actions; those need an individual decision. Nothing executes on approval.
+   Returning to the plan after a failure carries previous decisions forward
+   for equivalent actions; new actions always start awaiting approval.
 7. **Apply** — per-action Pending / Succeeded / Failed progress. Denied actions
    are reported as **Skipped**, never as failed. Execution summaries
    distinguish approved / executed / succeeded / failed / skipped.
-8. **Verify** — re-runs Core diagnostics; shows resolved / remaining.
-9. **Test Project** — detects the project's own `test` / `start` / `build`
-   npm script from a fixed allowlist and runs it through the Core safe command
-   runner. Anything else reports plainly that no safe test command exists.
-10. **Success** — repairs applied, verification passed, project test passed,
-    with the change list and Test Project / Start Over actions.
-11. **Failure** — states exactly what failed (execution, verification, or
-    project test), lists succeeded vs failed changes, and offers
-    **Return to Repair Plan**, which preserves the failure reason and the
-    user's previous decisions where still valid.
+8. **Verify** — re-runs Core diagnostics; shows resolved / remaining, then
+   offers Test and Smoke explicitly. A clean re-check of an untouched project
+   stays on Status: verification never manufactures the Success screen.
+9. **Test Project** — runs the project's own *terminating* test command
+   (`npm test`, `pytest -q`, `cargo test`, `go test ./...`, `dotnet test`,
+   `mvn test`, `gradle test`) through the Core safe command runner, guarded and
+   cancellable. Anything else reports plainly that no safe test command exists.
+10. **Run / Smoke Test** — launches the app's `dev` (preferred) or `start`
+    script, waits up to 60 seconds for localhost readiness (declared `--port`,
+    newly bound ports, then common defaults), performs an HTTP readiness check,
+    then always terminates the whole process tree. A server that stays alive is
+    success, never a timeout failure.
+11. **Success** — requires applied changes, clean verification, *and* a passed
+    test or smoke check, all shown as evidence, with Test / Smoke / Start Over
+    actions.
+12. **Failure** — lists every applicable failure category (execution,
+    verification, test, smoke) with its evidence, plus succeeded vs failed
+    changes, and offers **Return to Repair Plan**, which preserves the failure
+    reason and the user's previous decisions where still valid. Start Over
+    genuinely resets the workflow to AI Mode.
 
 Action states are mutually exclusive by construction: an action is exactly one
 of Awaiting approval, Approved, Denied, Executed, Failed, or Verified — a failed
@@ -125,9 +141,11 @@ arrives, and host-side render failures fall back to an error screen.
 
 Review commands open the workflow at the matching stage. Applying a plan whose
 diagnostics changed since planning is blocked until a fresh plan is generated.
-`ResolveIt: Repair` (and the agent `Run`) keep the legacy flow: the plan is
+`ResolveIt: Repair` (and the agent `Run`) keep the legacy flow, hidden from the
+Command Palette but still invocable programmatically: the plan is
 printed to the `ResolveIt` output channel, then each action is asked via
-QuickPick (`Allow` / `Deny`). Denied actions never execute. Manual-only items
+QuickPick (`Allow` / `Deny`). The panel-internal `Allow`/`Skip` actions are
+likewise hidden from the palette. Denied actions never execute. Manual-only items
 are reported, never run.
 
 ## Repair approval and safety
@@ -227,6 +245,12 @@ npm run validate-package
   nonce, no inline handlers, no `eval`, no local resource loading, an
   allowlisted command protocol, and approval messages validated against the
   current Core plan (unknown action IDs are ignored).
+- Test and smoke handlers are guarded against concurrent runs (a second run
+  while one is active is refused, never duplicated) and support cancellation,
+  which terminates the underlying process; smoke runs always terminate the
+  whole server process tree afterwards.
+- Smoke readiness is bounded (~60 s) and port-aware (declared ports, newly
+  bound ports, then common defaults); a server that stays alive is success.
 - Action types without a registered Core tool (`upgrade-runtime`,
   `install-tool`, `run-script`, ...) cannot auto-execute; approving one fails
   honestly at execution with the Core reason, and the failure screen offers

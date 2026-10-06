@@ -35,6 +35,22 @@ export interface ProjectTestState {
   readonly exitCode: number;
   readonly output: string;
   readonly message: string;
+  readonly cancelled?: boolean;
+}
+
+export interface ProjectSmokeState {
+  readonly running: boolean;
+  readonly commandLabel?: string;
+  readonly attempted: boolean;
+  readonly started: boolean;
+  readonly listening: boolean;
+  readonly responded: boolean;
+  readonly success: boolean;
+  readonly port?: number;
+  readonly url?: string;
+  readonly output: string;
+  readonly message: string;
+  readonly cancelled?: boolean;
 }
 
 export interface AIStatusState {
@@ -90,6 +106,7 @@ export class ExtensionState {
   private lastError?: ExtensionErrorState;
   private aiSummary?: string;
   private projectTest?: ProjectTestState;
+  private projectSmoke?: ProjectSmokeState;
 
   getRevision(): number {
     return this.revision;
@@ -112,6 +129,7 @@ export class ExtensionState {
     this.lastVerification = undefined;
     this.verificationSummary = undefined;
     this.projectTest = undefined;
+    this.projectSmoke = undefined;
     this.events = [];
     this.hasScanned = false;
     this.activeOperation = undefined;
@@ -250,6 +268,45 @@ export class ExtensionState {
 
   getProjectTest(): ProjectTestState | undefined {
     return this.projectTest;
+  }
+
+  setProjectSmoke(smoke: ProjectSmokeState | undefined): void {
+    this.projectSmoke = smoke;
+    this.revision += 1;
+  }
+
+  getProjectSmoke(): ProjectSmokeState | undefined {
+    return this.projectSmoke;
+  }
+
+  /**
+   * Explicit workflow reset for Start Over. Clears everything the workflow
+   * produced while keeping the current workspace binding (and the AI provider
+   * status, which describes configuration, not workflow progress).
+   */
+  resetWorkflow(): void {
+    this.diagnostics = [];
+    this.environmentInfo = undefined;
+    this.requirements = [];
+    this.projectName = undefined;
+    this.lastRun = undefined;
+    this.lastVerification = undefined;
+    this.verificationSummary = undefined;
+    this.events = [];
+    this.hasScanned = false;
+    this.activeOperation = undefined;
+    this.repairPlan = undefined;
+    this.repairPlanAiUsed = false;
+    this.repairPlanNotices = [];
+    this.planDiagnosticsRevision = -1;
+    this.diagnosticsRevision = 0;
+    this.approvals = new Map();
+    this.execution = undefined;
+    this.lastError = undefined;
+    this.aiSummary = undefined;
+    this.projectTest = undefined;
+    this.projectSmoke = undefined;
+    this.revision += 1;
   }
 
   setDiagnostics(diagnostics: ReadonlyArray<Diagnostic>): void {

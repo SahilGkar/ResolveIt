@@ -45,7 +45,11 @@ const CATEGORY_ORDER: Record<DiagnosticCategory, number> = {
 function generateDedupKey(diagnostic: Diagnostic): string {
   const req = diagnostic.requirement;
   if (req) {
-    return `${diagnostic.category}-${req.ecosystem}-${req.name}-${req.type}`;
+    // Origin is part of the key so a manifest declaration and its lockfile
+    // twin are never collapsed: they mean different things (actionable vs
+    // managed-through-the-manifest). Source file alone is NOT included so
+    // identical declarations across nested projects still deduplicate.
+    return `${diagnostic.category}-${req.ecosystem}-${req.name}-${req.type}-${req.origin ?? 'direct'}`;
   }
   return `${diagnostic.category}-${diagnostic.code}-${diagnostic.title}`;
 }

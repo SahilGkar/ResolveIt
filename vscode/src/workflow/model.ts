@@ -69,18 +69,24 @@ export function adjacentStep(step: WorkflowStep, direction: 'forward' | 'back'):
   return WORKFLOW_STEP_ORDER[next];
 }
 
+/**
+ * What the UI may claim about a provider option. `available` is true only for
+ * the deterministic path or a provider that was actually probed successfully;
+ * merely selecting an option never makes it available.
+ */
+export type AIModeStatus = 'connected' | 'not-reachable' | 'not-configured' | 'not-checked';
+
 export interface AIModeOption {
   readonly id: 'none' | 'local' | 'external';
   readonly label: string;
   readonly description: string;
+  readonly status: AIModeStatus;
   readonly available: boolean;
   readonly configured: boolean;
 }
 
 export interface WorkflowModel {
   readonly currentStep: WorkflowStep;
-  readonly canGoBack: boolean;
-  readonly canGoForward: boolean;
   readonly workspaceName: string;
   readonly workspaceRoot: string;
   readonly aiMode: AIConfig['provider'];
@@ -97,7 +103,11 @@ export interface WorkflowModel {
   };
   readonly statusSummary: {
     readonly requirementsTotal: number;
-    readonly issuesFound: number;
+    /** Informational findings (info/hint): inventory notes, not problems. */
+    readonly infoFindings: number;
+    /** Real issues: warning severity and above. */
+    readonly issues: number;
+    /** Blocking issues: error/critical. */
     readonly blockingIssues: number;
   };
   readonly repairPlan: {
@@ -134,41 +144,77 @@ export interface WorkflowModel {
     readonly exitCode: number;
     readonly output: string;
     readonly message: string;
+    readonly cancelled?: boolean;
   };
-  /** Whether the analyze stage still has to run before Status is reachable. */
-  readonly canLeaveAnalyze: boolean;
+  readonly projectSmoke?: {
+    readonly running: boolean;
+    readonly commandLabel?: string;
+    readonly attempted: boolean;
+    readonly started: boolean;
+    readonly listening: boolean;
+    readonly responded: boolean;
+    readonly success: boolean;
+    readonly port?: number;
+    readonly url?: string;
+    readonly output: string;
+    readonly message: string;
+    readonly cancelled?: boolean;
+  };
   readonly verifyResult: {
     readonly success: boolean;
     readonly resolved: number;
     readonly remaining: number;
     readonly details: string;
   };
+  /** Every applicable failure category with its evidence. Empty when nothing failed. */
+  readonly failures: ReadonlyArray<WorkflowFailure>;
   readonly errorMessage?: string;
 }
 
+export interface WorkflowFailure {
+  readonly kind: 'execution' | 'verification' | 'test' | 'smoke';
+  readonly title: string;
+  readonly detail: string;
+}
+
 function getAIModeOptions(aiConfig: AIConfig, aiStatus?: { available: boolean; provider: string; model: string; baseUrl: string }): AIModeOption[] {
+  const statusFor = (id: 'none' | 'local' | 'external'): AIModeStatus => {
+    if (id === 'none') {
+      return 'connected';
+    }
+    if (!aiStatus || aiStatus.provider !== id) {
+      return aiConfig.provider === id ? 'not-checked' : 'not-configured';
+    }
+    return aiStatus.available ? 'connected' : 'not-reachable';
+  };
+  const option = (
+    id: 'none' | 'local' | 'external',
+    label: string,
+    description: string,
+    configured: boolean
+  ): AIModeOption => {
+    const status = statusFor(id);
+    return { id, label, description, status, available: status === 'connected', configured };
+  };
   return [
-    {
-      id: 'none',
-      label: 'No AI (Deterministic)',
-      description: 'Use built-in diagnostic rules only. No external AI calls.',
-      available: true,
-      configured: true,
-    },
-    {
-      id: 'local',
-      label: 'Local AI (Ollama-compatible)',
-      description: 'Use a local Ollama-compatible endpoint for AI-assisted planning.',
-      available: aiStatus?.provider === 'local' || aiConfig.provider === 'local',
-      configured: aiConfig.provider === 'local' && !!aiConfig.baseUrl,
-    },
-    {
-      id: 'external',
-      label: 'External AI (OpenAI-compatible)',
-      description: 'Use an OpenAI-compatible API (OpenAI, Azure, etc.) for AI-assisted planning.',
-      available: aiStatus?.provider === 'external' || aiConfig.provider === 'external',
-      configured: aiConfig.provider === 'external' && !!aiConfig.baseUrl,
-    },
+    option(
+      'none',
+      'No AI (Deterministic)',
+      'Use built-in diagnostic rules only. No external AI calls.',
+      true
+    ),
+    option(
+      'local',
+      'Local AI (Ollama-compatible)',
+      'Use a local Ollama-compatible endpoint for AI-assisted planning.',
+      aiConfig.provider === 'local' && !!aiConfig.baseUrl
+    ),
+    option(
+      'external',
+      'External AI (OpenAI-compatible)',
+      'Use an OpenAI-compatible API (OpenAI, Azure, etc.) for AI-assisted planning.',
+      aiConfig.provider === 'external' && !!aiConfig.baseUrl
+    ),
   ];
 }
 
@@ -194,11 +240,14 @@ function getAnalyzeProgress(state: ExtensionState): WorkflowModel['analyzeProgre
 function getStatusSummary(state: ExtensionState): WorkflowModel['statusSummary'] {
   const diagnostics = state.getDiagnostics();
   const requirements = state.getRequirements().flatMap(r => r.requirements);
+  const info = diagnostics.filter(d => d.severity === 'info' || d.severity === 'hint').length;
+  const issues = diagnostics.filter(d => d.severity === 'warning' || d.severity === 'error' || d.severity === 'critical').length;
   const blocking = diagnostics.filter(d => d.severity === 'error' || d.severity === 'critical').length;
 
   return {
     requirementsTotal: requirements.length,
-    issuesFound: diagnostics.length,
+    infoFindings: info,
+    issues,
     blockingIssues: blocking,
   };
 }
@@ -385,16 +434,41 @@ export function resolveCurrentStep(state: ExtensionState, input: WorkflowModelIn
 function deriveStep(state: ExtensionState, hasWorkspace: boolean): WorkflowStep {
   const hasPlan = state.getRepairPlan() !== undefined;
   const hasExecution = state.getExecution() !== undefined;
-  const hasVerification = state.getLastVerification() !== undefined;
+  const verification = state.getLastVerification();
   const hasError = state.getLastError() !== undefined;
   const hasScanned = state.getHasScanned();
+  const test = state.getProjectTest();
+  const smoke = state.getProjectSmoke();
+  const testFailed = test !== undefined && test.attempted && !test.success && !test.running;
+  const smokeFailed = smoke !== undefined && smoke.attempted && !smoke.success && !smoke.running;
+  const testPassed = test !== undefined && test.attempted && test.success && !test.running;
+  const smokePassed = smoke !== undefined && smoke.attempted && smoke.success && !smoke.running;
 
-  if (hasError && !hasVerification) {
+  if (hasError && verification === undefined) {
     return 'failed';
   }
-  if (hasVerification) {
-    const result = getVerifyResult(state);
-    return result.success ? 'success' : 'failed';
+  if (verification !== undefined) {
+    if (verification.remaining.length > 0) {
+      return 'failed';
+    }
+    if (!hasExecution) {
+      // A baseline re-check on an untouched project proves nothing was broken,
+      // but it is not a completed workflow. Stay on Status; never manufacture
+      // a Success screen from zero changes.
+      return 'status';
+    }
+    if (testFailed || smokeFailed) {
+      return 'failed';
+    }
+    if (testPassed || smokePassed) {
+      return 'success';
+    }
+    // Applied and verified, but no test/smoke validation yet: the reachable
+    // verify stage, which offers Test and Smoke explicitly.
+    return 'verify';
+  }
+  if (testFailed || smokeFailed) {
+    return 'failed';
   }
   if (hasExecution) {
     return 'apply';
@@ -404,7 +478,7 @@ function deriveStep(state: ExtensionState, hasWorkspace: boolean): WorkflowStep 
   }
   if (hasScanned) {
     // Both problematic and healthy projects land on Status: it shows the
-    // summary either way, and Success is reserved for actual verification.
+    // summary either way, and Success is reserved for a completed workflow.
     return 'status';
   }
   return hasWorkspace ? 'analyze' : 'project';
@@ -431,24 +505,10 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
   const repairPlan = getRepairPlan(state);
   const applyProgress = getApplyProgress(state);
   const verifyResult = getVerifyResult(state);
-
-  // Back/forward navigation is meaningful across the whole linear workflow.
-  const canGoBack = currentStep !== 'failed' && adjacentStep(currentStep, 'back') !== undefined;
-
-  // Status is only reachable once analysis has actually produced diagnostics, so the
-  // analyze stage must not offer a Next action that cannot legally fire. Without a
-  // workspace there is nothing to advance into at all.
-  const canLeaveAnalyze = state.getHasScanned();
-  const canGoForward =
-    input.hasWorkspace &&
-    adjacentStep(currentStep, 'forward') !== undefined &&
-    !(currentStep === 'analyze' && !canLeaveAnalyze);
+  const failures = getFailures(state);
 
   return {
     currentStep,
-    canGoBack,
-    canGoForward,
-    canLeaveAnalyze,
     workspaceName: input.workspaceName,
     workspaceRoot: input.workspaceRoot,
     aiMode: aiConfig.provider,
@@ -462,6 +522,53 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
     applyProgress,
     verifyResult,
     projectTest: state.getProjectTest(),
+    projectSmoke: state.getProjectSmoke(),
+    failures,
     errorMessage: state.getLastError()?.message,
   };
+}
+
+/**
+ * Every failure category that currently applies, each with its own evidence.
+ * Categories are independent: an execution failure and a verification failure
+ * are both listed rather than one hiding the other.
+ */
+function getFailures(state: ExtensionState): ReadonlyArray<WorkflowFailure> {
+  const failures: WorkflowFailure[] = [];
+  const execution = state.getExecution();
+  const failedActions = (execution?.results ?? []).filter((entry) => !entry.result.success);
+  if (failedActions.length > 0) {
+    failures.push({
+      kind: 'execution',
+      title: 'Execution failure',
+      detail: failedActions
+        .map((entry) => `${entry.action.description} — ${entry.result.error ?? 'unknown error'}`)
+        .join('; '),
+    });
+  }
+  const verification = state.getLastVerification();
+  if (verification && verification.remaining.length > 0) {
+    failures.push({
+      kind: 'verification',
+      title: 'Verification failure',
+      detail: `${verification.resolved.length} resolved, ${verification.remaining.length} blocking diagnostic(s) remain.`,
+    });
+  }
+  const test = state.getProjectTest();
+  if (test && test.attempted && !test.success && !test.running) {
+    failures.push({
+      kind: 'test',
+      title: 'Project test failure',
+      detail: `${test.commandLabel ?? 'Project test'}: ${test.message}`,
+    });
+  }
+  const smoke = state.getProjectSmoke();
+  if (smoke && smoke.attempted && !smoke.success && !smoke.running) {
+    failures.push({
+      kind: 'smoke',
+      title: 'Smoke test failure',
+      detail: `${smoke.commandLabel ?? 'Smoke test'}: ${smoke.message}`,
+    });
+  }
+  return failures;
 }

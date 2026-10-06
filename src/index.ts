@@ -165,9 +165,16 @@ export {
   createCommandRunner,
   createMockCommandRunner,
   createSafeCommandRunner,
+  killProcessTree,
+  spawnMonitoredCommand,
+  validateSafeInvocation,
+  buildSafeEnv,
   REPAIR_EXECUTABLE_ALLOWLIST,
+  type CancellationSignal,
   type CommandRunnerOptions,
   type SafeCommandRunnerConfig,
+  type MonitoredProcess,
+  type MonitoredProcessOptions,
 } from './environment/command-runner.js';
 
 export {
@@ -180,9 +187,16 @@ export {
   detectProjectTestCommand,
   runProjectTest,
   NO_PROJECT_TEST_COMMAND_MESSAGE,
+  detectProjectSmokeCommand,
+  runProjectSmoke,
+  NO_PROJECT_SMOKE_COMMAND_MESSAGE,
+  SMOKE_READINESS_TIMEOUT_MS,
   type ProjectTestCommand,
   type ProjectTestResult,
   type ProjectTestRunner,
+  type ProjectSmokeCommand,
+  type ProjectSmokeResult,
+  type RunProjectSmokeOptions,
 } from './agent/project-test.js';
 
 export {

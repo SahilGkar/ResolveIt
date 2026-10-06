@@ -378,21 +378,37 @@ install-tool range handling, lockfile/transitive filtering).
   is configured, and the plan is labelled AI-generated or deterministic by the
   actual path. Core rejection reasons, AI fallbacks, and manual-action items
   surface as notices on the plan screen.
-- **Test Project** (`src/agent/project-test.ts`): detects the project's own
-  `test`/`start`/`build` npm script from a fixed allowlist and runs it through
-  the existing safe command runner; anything else reports plainly that no safe
-  test command exists.
+- **Test Project vs Run / Smoke Test** (`src/agent/project-test.ts`): terminating
+  test commands only (`npm test`, `pytest -q`, `cargo test`, `go test ./...`,
+  `dotnet test`, `mvn test`, `gradle test`) run through the safe command runner
+  with cooperative cancellation; dev/start scripts are detected separately as a
+  smoke check that launches the app, waits up to 60 s for localhost readiness
+  (declared, newly bound, then default ports plus an HTTP probe), and always
+  terminates the whole process tree. A server that stays alive is smoke success;
+  its exit code is never graded as a test result.
 - **Correctness fixes found by end-to-end runs**: runtime-version diagnostics no
   longer propose uninstallable `install-dependency` actions; the installer
   translates command-line-unsafe version ranges (`^4.0.0`) to bare package
   installs resolved from the manifest; lockfile/transitive/indirect
   requirements produce no install actions (filtered at both the diagnostic and
   planner layers, with regression tests).
+- **Workflow correction pass**: generic footer Back/Next removed in favor of
+  contextual actions (footer buttons could not transition post-analysis
+  stages); a baseline re-check stays on Status and never manufactures Success
+  (which requires applied changes, clean verification, and a passed test or
+  smoke check); the reachable Verify stage offers Test and Smoke explicitly;
+  Status counts split into Requirements / Informational findings / Issues
+  (warning+) / Blocking; lockfile entries aggregate into one inventory
+  diagnostic per file with per-package evidence; AI option badges reflect
+  probed reachability only; Start Over performs an explicit reset to AI Mode;
+  return-to-plan carries decisions forward by stable action fingerprint;
+  failure screen lists every applicable category; legacy `repair`/`run` and
+  panel-internal approval commands are hidden from Command Palette discovery.
 
-### Validation performed (Phase 15)
+### Validation performed (Phase 15 + corrections)
 
-- Core: 30 files, 473 tests, all passing; typecheck, lint, build pass.
-- Extension: 9 files, 142 tests, all passing; typecheck, lint, build,
+- Core: 30 files, 488 tests, all passing; typecheck, lint, build pass.
+- Extension: 9 files, 169 tests, all passing; typecheck, lint, build,
   `validate-package`, `vsce package` pass.
 - Headless end-to-end runs of the real built bundle against real fixture
   projects through the panel message protocol: full success path (analyze →

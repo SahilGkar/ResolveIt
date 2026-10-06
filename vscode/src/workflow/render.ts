@@ -198,9 +198,12 @@ export function renderWorkflowHtml(model: WorkflowModel): string {
   ];
 
   const stepIndex = steps.findIndex(s => s.id === model.currentStep);
+  // The failed screen has no pill of its own: every stage was completed to get
+  // there, so all pills render done and none renders active.
+  const failed = model.currentStep === 'failed';
   const stepHtml = steps.map((step, i) => {
     let cls = 'wf-step';
-    if (i < stepIndex) cls += ' done';
+    if (failed || i < stepIndex) cls += ' done';
     else if (i === stepIndex) cls += ' active';
     return `<span class="${cls}">${escapeHtml(step.label)}</span>`;
   }).join('');
@@ -236,17 +239,6 @@ export function renderWorkflowHtml(model: WorkflowModel): string {
       break;
   }
 
-  const navHtml = `
-    <div class="wf-nav">
-      ${model.canGoBack ? '<button class="wf-btn secondary" data-command="workflow.goBack">← Back</button>' : ''}
-      ${
-        model.canGoForward && model.currentStep !== 'success' && model.currentStep !== 'failed'
-          ? '<button class="wf-btn primary" data-command="workflow.goForward">Next →</button>'
-          : ''
-      }
-    </div>
-  `;
-
   return `
     <div class="wf-root">
       <div class="wf-header">
@@ -255,15 +247,20 @@ export function renderWorkflowHtml(model: WorkflowModel): string {
           <p class="wf-subtitle">${escapeHtml(model.workspaceName)}</p>
         </div>
       </div>
-      <div class="wf-step-indicator" role="navigation" aria-label="Workflow steps">${stepHtml}</div>
+      <div class="wf-step-indicator" aria-label="Workflow progress">${stepHtml}</div>
       ${model.errorMessage ? `<div class="wf-error"><div class="wf-error-title">Error</div><div>${escapeHtml(model.errorMessage)}</div></div>` : ''}
       ${contentHtml}
-      <div class="wf-footer">${navHtml}</div>
     </div>
   `;
 }
 
 function renderAiModeStep(model: WorkflowModel): string {
+  const statusText: Record<AIModeOption['status'], string> = {
+    connected: 'Connected',
+    'not-reachable': 'Not reachable',
+    'not-configured': 'Not configured',
+    'not-checked': 'Not checked',
+  };
   const optionsHtml = model.aiModeOptions.map((opt: AIModeOption) => `
     <label class="wf-ai-option ${model.aiMode === opt.id ? 'selected' : ''}">
       <input type="radio" name="aiMode" value="${opt.id}" ${model.aiMode === opt.id ? 'checked' : ''} data-command="workflow.setAiMode" data-step="${opt.id}">
@@ -272,7 +269,7 @@ function renderAiModeStep(model: WorkflowModel): string {
         <div class="wf-ai-option-desc">${escapeHtml(opt.description)}</div>
       </div>
       <span class="wf-ai-option-status ${opt.available ? 'available' : 'unavailable'}">
-        ${opt.available ? 'Available' : 'Not configured'}
+        ${escapeHtml(statusText[opt.status])}
       </span>
     </label>
   `).join('');
@@ -282,19 +279,19 @@ function renderAiModeStep(model: WorkflowModel): string {
     ? `Selected provider: ${escapeHtml(status.provider)} · Model: ${escapeHtml(status.model)} · ` +
       `Connection: ${status.available ? 'reachable' : 'unreachable'} · ` +
       `Endpoint: ${escapeHtml(status.baseUrl)}`
-    : 'AI status has not been probed yet.';
+    : 'AI status has not been probed yet. Use Check Connection after selecting a mode.';
 
   return `
     <div class="wf-section">
       <h2 class="wf-section-title">How should ResolveIt reason?</h2>
-      <p class="wf-card-subtitle">Choose how ResolveIt should generate repair plans. You can change this later in settings. API keys are never shown here.</p>
+      <p class="wf-card-subtitle">Choose how ResolveIt should generate repair plans. "Connected" means the provider was actually reached; selecting an option alone never marks it available. You can change this later in settings. API keys are never shown here.</p>
       <div class="wf-ai-options">${optionsHtml}</div>
       <div class="wf-card" style="margin-top: 12px;">
         <p class="wf-card-subtitle">${connectionLine}</p>
       </div>
       <div class="wf-btn-group">
         <button class="wf-btn secondary" data-command="workflow.retryAi">Check Connection</button>
-        <button class="wf-btn primary" data-command="workflow.goForward">Continue</button>
+        <button class="wf-btn primary" data-command="workflow.goForward">Continue to Project</button>
       </div>
     </div>
   `;
@@ -317,7 +314,7 @@ function renderProjectStep(model: WorkflowModel): string {
       </div>
       ${
         hasWorkspace
-          ? '<div class="wf-btn-group"><button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button></div>'
+          ? '<div class="wf-btn-group"><button class="wf-btn secondary" data-command="workflow.goBack">← Back</button><button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button></div>'
           : '<p class="wf-notice">Open a folder in VS Code to analyze a project. ResolveIt works on the workspace you already have open &mdash; there is nothing to upload.</p>'
       }
     </div>
@@ -340,26 +337,23 @@ function renderAnalyzeStep(model: WorkflowModel): string {
     </div>
   `).join('');
 
-  const completed = analyzeProgress.completed;
-
+  // Note: there is intentionally no "completed" branch here. Once analysis
+  // finishes, the state machine derives the Status stage, so this screen only
+  // ever renders before or during a run.
   return `
     <div class="wf-section">
       <h2 class="wf-section-title">Analyzing Project</h2>
       <div class="wf-card">
         <div class="wf-action-list">${stepsHtml}</div>
-        ${!completed ? `
-          <div class="wf-progress">
-            <div class="wf-progress-bar"><div class="wf-progress-fill" style="width: ${analyzeProgress.steps.filter((s) => s.done).length / analyzeProgress.steps.length * 100}%"></div></div>
-            <div class="wf-progress-text"><span>${escapeHtml(analyzeProgress.stage)}</span></div>
-          </div>
-        ` : ''}
+        <div class="wf-progress">
+          <div class="wf-progress-bar"><div class="wf-progress-fill" style="width: ${analyzeProgress.steps.filter((s) => s.done).length / analyzeProgress.steps.length * 100}%"></div></div>
+          <div class="wf-progress-text"><span>${escapeHtml(analyzeProgress.stage)}</span></div>
+        </div>
       </div>
       <div class="wf-btn-group">
-        ${completed
-          ? '<button class="wf-btn primary" data-command="workflow.goForward">Continue to Status</button>'
-          : started
-            ? '<button class="wf-btn primary" disabled>Analyzing…</button><button class="wf-btn secondary" data-command="workflow.cancelAnalyze">Cancel</button>'
-            : '<button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button>'}
+        ${started
+          ? '<button class="wf-btn primary" disabled>Analyzing…</button><button class="wf-btn secondary" data-command="workflow.cancelAnalyze">Cancel</button>'
+          : '<button class="wf-btn secondary" data-command="workflow.goBack">← Back</button><button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button>'}
       </div>
     </div>
   `;
@@ -374,27 +368,34 @@ function renderStatusStep(model: WorkflowModel): string {
       <div class="wf-card">
         <div style="display: flex; flex-direction: column; gap: 12px;">
           <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge success">✓</span>
+            <span class="wf-badge">≡</span>
             <span>Requirements: <strong>${statusSummary.requirementsTotal}</strong></span>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="wf-badge info">i</span>
+            <span>Informational findings: <strong>${statusSummary.infoFindings}</strong></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
             <span class="wf-badge warning">⚠</span>
-            <span>Issues found: <strong>${statusSummary.issuesFound}</strong></span>
+            <span>Issues: <strong>${statusSummary.issues}</strong></span>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <span class="wf-badge error">✗</span>
             <span>Blocking issues: <strong>${statusSummary.blockingIssues}</strong></span>
           </div>
         </div>
-        ${healthy ? '<p class="wf-card-subtitle">Project looks healthy. No blocking diagnostics found. You can verify again or run the project test.</p>' : ''}
+        <p class="wf-card-subtitle">Informational findings are inventory notes (for example per-package dependency observations), not problems. Only issues at warning level and above need attention; only blocking issues stop a project from working.</p>
+        ${healthy ? '<p class="wf-card-subtitle">Project looks healthy. No blocking diagnostics found. You can re-check diagnostics or run the project test.</p>' : ''}
       </div>
       <div class="wf-btn-group">
-        ${statusSummary.blockingIssues > 0 
-          ? '<button class="wf-btn primary" data-command="workflow.generatePlan">Generate Repair Plan</button>' 
-          : '<button class="wf-btn primary" data-command="workflow.verify">Verify Project</button><button class="wf-btn secondary" data-command="workflow.testProject">Test Project</button>'}
+        ${statusSummary.blockingIssues > 0
+          ? '<button class="wf-btn primary" data-command="workflow.generatePlan">Generate Repair Plan</button>'
+          : '<button class="wf-btn primary" data-command="workflow.verify">Re-check Project</button><button class="wf-btn secondary" data-command="workflow.testProject">Test Project</button><button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>'}
         <button class="wf-btn secondary" data-command="workflow.reanalyze">Re-analyze</button>
       </div>
     </div>
+    ${renderProjectTest(model)}
+    ${renderProjectSmoke(model)}
   `;
 }
 
@@ -450,15 +451,15 @@ function actionTarget(action: RepairAction): string {
 }
 
 function renderRepairPlanStep(model: WorkflowModel): string {
+  // The state machine only derives the repair-plan stage when a plan exists,
+  // so this screen always has actions to review.
   const { repairPlan } = model;
-  if (!repairPlan.plan) {
+  const plan = repairPlan.plan;
+  if (!plan) {
     return `
       <div class="wf-section">
         <h2 class="wf-section-title">Repair Plan</h2>
-        <div class="wf-empty">No repair plan generated yet.</div>
-        <div class="wf-btn-group">
-          <button class="wf-btn primary" data-command="workflow.generatePlan">Generate Repair Plan</button>
-        </div>
+        <div class="wf-empty">No repair plan is available in this state.</div>
       </div>
     `;
   }
@@ -503,6 +504,9 @@ function renderRepairPlanStep(model: WorkflowModel): string {
     : '';
 
   const provenance = repairPlan.aiUsed ? 'AI-generated plan' : 'Deterministic repair plan';
+  const verifiedNote = repairPlan.actions.some((item) => item.lifecycle === 'verified')
+    ? '<p class="wf-card-subtitle">Verification re-ran diagnostics against the whole project and found no remaining blocking diagnostics. Badges reflect that project-level confirmation, not proof that each individual action caused its fix.</p>'
+    : '';
 
   return `
     <div class="wf-section">
@@ -510,6 +514,7 @@ function renderRepairPlanStep(model: WorkflowModel): string {
       <div class="wf-card">
         <p class="wf-card-subtitle">${escapeHtml(provenance)} · ${repairPlan.totalCount} proposed · ${repairPlan.approvedCount} approved · ${repairPlan.deniedCount} denied · ${repairPlan.pendingCount} awaiting approval</p>
         <p class="wf-card-subtitle">Nothing has been modified. Nothing runs until you apply approved changes.</p>
+        ${verifiedNote}
         ${previous}
         ${notices}
         ${systemNote}
@@ -593,35 +598,56 @@ function renderProjectTest(model: WorkflowModel): string {
   `;
 }
 
-function renderVerifyStep(model: WorkflowModel): string {
-  const { verifyResult } = model;
-  const success = verifyResult.success;
+function renderProjectSmoke(model: WorkflowModel): string {
+  const smoke = model.projectSmoke;
+  if (!smoke) {
+    return '';
+  }
+  const badge = smoke.running
+    ? '<span class="wf-badge info">Running</span>'
+    : smoke.success
+      ? '<span class="wf-badge success">Responding</span>'
+      : '<span class="wf-badge error">Not responding</span>';
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">Verification ${success ? '<span class="wf-badge success">Passed</span>' : '<span class="wf-badge error">Failed</span>'}</h2>
+      <h2 class="wf-section-title">Run / Smoke Test ${badge}</h2>
       <div class="wf-card">
-        <div style="display: flex; flex-direction: column; gap: 12px;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge ${success ? 'success' : 'warning'}">${success ? '✓' : '⚠'}</span>
-            <span>${escapeHtml(verifyResult.details)}</span>
-          </div>
-          ${!success && verifyResult.remaining > 0 ? `
-            <div style="color: var(--vscode-descriptionForeground); font-size: 13px;">
-              ${verifyResult.remaining} blocking issue(s) remain. Return to the repair plan to try again.
-            </div>
-          ` : ''}
-        </div>
+        <p class="wf-card-subtitle">${escapeHtml(smoke.commandLabel ?? 'No safe run command was detected (looked for npm "dev" or "start" scripts).')}</p>
+        <p>${escapeHtml(smoke.message)}</p>
+        ${smoke.output ? `<pre class="wf-output">${escapeHtml(smoke.output)}</pre>` : ''}
       </div>
       <div class="wf-btn-group">
-        ${success ? `
-          <button class="wf-btn primary" data-command="workflow.testProject">Test Project</button>
-          <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
-        ` : `
-          <button class="wf-btn primary" data-command="workflow.returnToPlan">Return to Repair Plan</button>
-          <button class="wf-btn secondary" data-command="workflow.reanalyze">Re-analyze</button>
-        `}
+        <button class="wf-btn secondary" data-command="workflow.smokeTest" ${smoke.running ? 'disabled' : ''}>
+          ${smoke.running ? 'Checking…' : 'Run Again'}
+        </button>
+        <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
       </div>
     </div>
+  `;
+}
+
+function renderVerifyStep(model: WorkflowModel): string {
+  // Reachable only after a clean verification (remaining === 0); a failing
+  // verification derives the Failed stage instead.
+  const { verifyResult } = model;
+  return `
+    <div class="wf-section">
+      <h2 class="wf-section-title">Verification <span class="wf-badge success">Passed</span></h2>
+      <div class="wf-card">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span class="wf-badge success">✓</span>
+          <span>${escapeHtml(verifyResult.details)}</span>
+        </div>
+        <p class="wf-card-subtitle">Verification re-ran diagnostics against the whole project. Next, prove the project actually works: run its tests, its smoke check, or both.</p>
+      </div>
+      <div class="wf-btn-group">
+        <button class="wf-btn primary" data-command="workflow.testProject">Test Project</button>
+        <button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>
+        <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
+      </div>
+    </div>
+    ${renderProjectTest(model)}
+    ${renderProjectSmoke(model)}
   `;
 }
 
@@ -636,12 +662,16 @@ function renderSuccessStep(model: WorkflowModel): string {
       : '<p>Project looks healthy. No blocking diagnostics were found and nothing needed to change.</p>';
   const verification = model.verifyResult;
   const test = model.projectTest;
+  const smoke = model.projectSmoke;
   const evidence = [
     `<li>Repairs applied: ${model.applyProgress.succeeded} succeeded, ${model.applyProgress.failed} failed</li>`,
     `<li>Verification passed: ${verification.resolved} resolved, ${verification.remaining} remaining</li>`,
     test
       ? `<li>Project test ${test.success ? 'passed' : 'did not pass'}${test.commandLabel ? ` (${escapeHtml(test.commandLabel)})` : ''}</li>`
-      : '<li>Project test has not run yet</li>',
+      : '<li>Project test has not run</li>',
+    smoke
+      ? `<li>Smoke test ${smoke.success ? 'passed' : 'did not pass'}${smoke.commandLabel ? ` (${escapeHtml(smoke.commandLabel)})` : ''}${smoke.url ? ` — ${escapeHtml(smoke.url)} responded` : ''}</li>`
+      : '<li>Smoke test has not run</li>',
   ].join('');
 
   return `
@@ -658,10 +688,12 @@ function renderSuccessStep(model: WorkflowModel): string {
       </div>
       <div class="wf-btn-group">
         <button class="wf-btn primary" data-command="workflow.testProject">Test Project</button>
+        <button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>
         <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
       </div>
     </div>
     ${renderProjectTest(model)}
+    ${renderProjectSmoke(model)}
   `;
 }
 
@@ -669,16 +701,22 @@ function renderFailedStep(model: WorkflowModel): string {
   const execution = model.applyProgress;
   const verification = model.verifyResult;
   const test = model.projectTest;
+  const smoke = model.projectSmoke;
   const failedActions = execution.actions.filter((action) => action.status === 'failed');
   const succeededActions = execution.actions.filter((action) => action.status === 'success');
 
-  const failureKind = test && !test.success && test.attempted
-    ? 'Project test failure'
-    : !verification.success && (verification.resolved > 0 || verification.remaining > 0)
-      ? 'Verification failure'
-      : failedActions.length > 0
-        ? 'Execution failure'
-        : 'Resolution failure';
+  // Every applicable failure category is listed; a test failure never hides a
+  // verification failure and vice versa.
+  const failureItems = model.failures
+    .map(
+      (failure) =>
+        `<li><strong>${escapeHtml(failure.title)}:</strong> ${escapeHtml(failure.detail)}</li>`
+    )
+    .join('');
+  const failureList =
+    failureItems !== ''
+      ? `<ul class="wf-list">${failureItems}</ul>`
+      : '<p>Resolution failure: the workflow could not complete.</p>';
 
   const succeededList = succeededActions.length > 0
     ? `<p>Succeeded:</p><ul class="wf-list">${succeededActions.map((action) => `<li>${escapeHtml(action.label)}</li>`).join('')}</ul>`
@@ -692,19 +730,24 @@ function renderFailedStep(model: WorkflowModel): string {
   const testLine = test
     ? `<p>Project test${test.commandLabel ? ` (${escapeHtml(test.commandLabel)})` : ''}: ${escapeHtml(test.message)}</p>`
     : '';
+  const smokeLine = smoke
+    ? `<p>Smoke test${smoke.commandLabel ? ` (${escapeHtml(smoke.commandLabel)})` : ''}: ${escapeHtml(smoke.message)}</p>`
+    : '';
 
   return `
     <div class="wf-section">
       <h2 class="wf-section-title">ResolveIt could not fully resolve the project <span class="wf-badge error">✗ Failed</span></h2>
       <div class="wf-error">
-        <div class="wf-error-title">${escapeHtml(failureKind)}</div>
-        <div>${escapeHtml(model.errorMessage || verification.details || 'An unknown error occurred')}</div>
+        <div class="wf-error-title">What failed</div>
+        <div>${failureList}</div>
+        ${model.errorMessage ? `<div>${escapeHtml(model.errorMessage)}</div>` : ''}
       </div>
       <div class="wf-card">
         ${succeededList}
         ${failedList}
         ${verificationLine}
         ${testLine}
+        ${smokeLine}
       </div>
       <div class="wf-btn-group">
         <button class="wf-btn primary" data-command="workflow.returnToPlan">Return to Repair Plan</button>

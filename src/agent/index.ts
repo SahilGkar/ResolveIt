@@ -63,5 +63,20 @@ export type { AgentEvent, AgentEventType, AgentEventCallback } from './events.js
 export { createAIPlanner } from './ai-planner.js';
 export type { AIPlannerCallbacks } from './ai-planner.js';
 
-export { detectProjectTestCommand, runProjectTest, NO_PROJECT_TEST_COMMAND_MESSAGE } from './project-test.js';
-export type { ProjectTestCommand, ProjectTestResult, ProjectTestRunner } from './project-test.js';
+export {
+  detectProjectTestCommand,
+  runProjectTest,
+  NO_PROJECT_TEST_COMMAND_MESSAGE,
+  detectProjectSmokeCommand,
+  runProjectSmoke,
+  NO_PROJECT_SMOKE_COMMAND_MESSAGE,
+  SMOKE_READINESS_TIMEOUT_MS,
+} from './project-test.js';
+export type {
+  ProjectTestCommand,
+  ProjectTestResult,
+  ProjectTestRunner,
+  ProjectSmokeCommand,
+  ProjectSmokeResult,
+  RunProjectSmokeOptions,
+} from './project-test.js';

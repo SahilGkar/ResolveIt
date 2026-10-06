@@ -7,12 +7,12 @@ unit coverage.
 
 ## Automated suites (current)
 
-- [x] Core tests: 478/478 (`npm test`: 30 files, includes project-test,
+- [x] Core tests: 488/488 (`npm test`: 30 files, includes project-test,
       lockfile-dependency-regression, and prompt-hints suites)
 - [x] Core build (`npm run build`)
 - [x] Core typecheck (`npx tsc --noEmit`)
 - [x] Core lint (`npm run lint`)
-- [x] Extension tests: 146/146 (`cd vscode && npm test`: 9 files, includes
+- [x] Extension tests: 169/169 (`cd vscode && npm test`: 9 files, includes
       workflow-panel, workflow-workflow, workflow-ai, and ui suites)
 - [x] Extension build (`cd vscode && npm run build`)
 - [x] Extension typecheck (`npm run typecheck`)
@@ -46,6 +46,22 @@ unit coverage.
       substituted with the runs above plus real-host install/activation)
 - [ ] F5 Extension Development Host configured (no
       `vscode/.vscode/launch.json` exists today)
+
+## Correction-pass validation (workflow semantics audit)
+
+- [x] Baseline re-check stays on Status; no manufactured Success
+- [x] Successful execution + verification + test reaches Success with evidence
+- [x] Generic footer Back/Next removed; only contextual actions rendered
+- [x] Test vs Smoke split: terminating per-ecosystem tests vs launch/readiness/tree-kill smoke
+- [x] Smoke readiness succeeds on arbitrary ports; timeout/exit-1 fail honestly; tree verified dead afterwards
+- [x] Test/smoke handlers guarded (no duplicates) and cancellable (process terminated)
+- [x] Status counts split: Requirements / Informational findings / Issues (warning+) / Blocking
+- [x] Lockfile entries aggregated per file with per-package evidence; dedup key includes origin
+- [x] AI badges reflect probed reachability only
+- [x] Start Over resets to AI Mode; return-to-plan carries decisions by fingerprint
+- [x] Failure screen lists every applicable category; Verified labeled as project-level
+- [x] Legacy repair/run/approval commands hidden from Command Palette discovery
+- [x] Every rendered workflow state reachable via legitimate transitions (tested)
 
 ## Phase 13/14 product validation
 

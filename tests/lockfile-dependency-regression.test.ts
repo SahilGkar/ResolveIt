@@ -166,22 +166,38 @@ describe('requirement parsing marks lockfile entries as lockfile origin', () => 
 });
 
 describe('dependency diagnostic rule remediation candidates', () => {
-  it('should not offer install remediation for lockfile packages', async () => {
+  it('should aggregate lockfile packages into one inventory diagnostic without install remediation', async () => {
     const diagnostics = await diagnoseFixture(lockfileFixture);
     const names = installedPackages(diagnostics);
 
-    for (const name of TRANSITIVE_PACKAGES) {
+    // Direct declarations keep per-package diagnostics.
+    for (const name of DIRECT_PACKAGES) {
       expect(names, `${name} should be reported as a dependency diagnostic`).toContain(name);
     }
 
+    // The whole lockfile collapses into a single inventory diagnostic whose
+    // evidence still names every transitive package: no information is lost,
+    // but hundreds of rows are not presented as problems.
+    const inventory = diagnostics.filter(
+      (entry) => entry.category === 'dependency' && entry.code === 'DEPENDENCY_LOCKFILE_INVENTORY'
+    );
+    expect(inventory).toHaveLength(1);
+    const evidenceText = (inventory[0]?.evidence ?? []).map((item) => item.description).join('\n');
     for (const name of TRANSITIVE_PACKAGES) {
-      const diagnostic = diagnostics.find(
+      expect(evidenceText, `${name} should be preserved in lockfile inventory evidence`).toContain(name);
+    }
+
+    const installs = (inventory[0]?.remediationCandidates ?? []).filter(
+      (candidate) => candidate.type === 'install-dependency'
+    );
+    expect(installs, 'lockfile inventory must not offer install remediation').toEqual([]);
+
+    // And no per-package diagnostic may exist for a transitive entry anymore.
+    for (const name of TRANSITIVE_PACKAGES) {
+      const perPackage = diagnostics.find(
         (entry) => entry.requirement?.name === name && entry.category === 'dependency'
       );
-      const installs = (diagnostic?.remediationCandidates ?? []).filter(
-        (candidate) => candidate.type === 'install-dependency'
-      );
-      expect(installs, `${name} must not offer an install-dependency remediation`).toEqual([]);
+      expect(perPackage, `${name} must not have its own diagnostic row`).toBeUndefined();
     }
   }, 60000);
 });
@@ -204,10 +220,14 @@ describe('RepairPlannerImpl output for lockfile trees', () => {
     const planner = createRepairPlanner();
     const plan = await planner.createPlan(diagnostics, planContext(lockfileFixture.workspace));
 
-    const dependencyCount = installedPackages(diagnostics).length;
-    expect(dependencyCount).toBeGreaterThanOrEqual(TRANSITIVE_PACKAGES.length);
-    // The original defect produced roughly one action per lockfile entry.
-    expect(installActions(plan).length).toBeLessThan(dependencyCount);
+    const requirementCount = lockfileFixture.requirements
+      .flatMap((parsed) => [...parsed.requirements])
+      .filter((req) => req.type === 'package-dependency').length;
+    expect(requirementCount).toBeGreaterThanOrEqual(TRANSITIVE_PACKAGES.length);
+    // The original defect produced roughly one action per lockfile entry; the
+    // aggregated inventory diagnostic carries no candidates, so only the
+    // direct declarations can produce install actions.
+    expect(installActions(plan).length).toBeLessThanOrEqual(DIRECT_PACKAGES.length);
   }, 60000);
 });
 
@@ -297,14 +317,24 @@ describe('yarn and pnpm lockfiles', () => {
       );
 
       const names = installedPackages(diagnostics);
-      expect(names).toContain('streamsearch');
-      expect(names).toContain('zwitch');
+      expect(names).toContain('commander');
+
+      // yarn.lock entries collapse into one inventory diagnostic; per-package
+      // rows (and their names on requirement objects) are gone by design, but
+      // every entry must survive in evidence.
+      const inventory = diagnostics.filter(
+        (entry) => entry.category === 'dependency' && entry.code === 'DEPENDENCY_LOCKFILE_INVENTORY'
+      );
+      expect(inventory).toHaveLength(1);
+      const evidenceText = (inventory[0]?.evidence ?? []).map((item) => item.description).join('\n');
 
       for (const name of ['streamsearch', 'zwitch']) {
-        const diagnostic = diagnostics.find(
+        expect(evidenceText, `${name} from yarn.lock must be preserved in evidence`).toContain(name);
+        const perPackage = diagnostics.find(
           (entry) => entry.requirement?.name === name && entry.category === 'dependency'
         );
-        const installs = (diagnostic?.remediationCandidates ?? []).filter(
+        expect(perPackage, `${name} must not have its own diagnostic row`).toBeUndefined();
+        const installs = (inventory[0]?.remediationCandidates ?? []).filter(
           (candidate) => candidate.type === 'install-dependency'
         );
         expect(installs, `${name} from yarn.lock must not offer an install`).toEqual([]);

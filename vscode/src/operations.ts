@@ -6,7 +6,8 @@ export type OperationKind =
   | 'requirements'
   | 'repair'
   | 'verify'
-  | 'analyze';
+  | 'analyze'
+  | 'test';
 
 export class OperationBusyError extends Error {
   readonly kind: OperationKind;
@@ -25,6 +26,50 @@ export class OperationCancelledError extends Error {
     super('ResolveIt operation was cancelled. No changes were applied after cancellation.');
     this.name = 'OperationCancelledError';
   }
+}
+
+/**
+ * Local cooperative cancellation source bridged into Core, which only speaks
+ * the structural CancellationSignal shape. Lets a VS Code cancellation token
+ * abort an in-flight child process instead of merely abandoning it.
+ */
+export interface CancellationSource {
+  readonly signal: {
+    readonly aborted: boolean;
+    addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+    removeEventListener(type: 'abort', listener: () => void): void;
+  };
+  abort(): void;
+}
+
+export function createCancellationSource(): CancellationSource {
+  let aborted = false;
+  const listeners = new Set<() => void>();
+  return {
+    signal: {
+      get aborted(): boolean {
+        return aborted;
+      },
+      addEventListener: (_type: string, listener: () => void): void => {
+        listeners.add(listener);
+      },
+      removeEventListener: (_type: string, listener: () => void): void => {
+        listeners.delete(listener);
+      },
+    },
+    abort: (): void => {
+      if (!aborted) {
+        aborted = true;
+        for (const listener of [...listeners]) {
+          try {
+            listener();
+          } catch {
+            // A cancelling listener must never break the abort itself.
+          }
+        }
+      }
+    },
+  };
 }
 
 export interface OperationToken {

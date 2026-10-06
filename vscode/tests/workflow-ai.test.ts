@@ -376,3 +376,69 @@ describe('success and failure screens carry evidence', () => {
     expect(html).toContain('data-command="workflow.returnToPlan"');
   });
 });
+
+describe('AI availability reflects probing, not selection', () => {
+  function aiModeModel(): ReturnType<typeof buildWorkflowModel> {
+    const state = new ExtensionState();
+    return buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: '/ws',
+      requestedStep: 'ai-mode',
+    });
+  }
+
+  function localOption(model: ReturnType<typeof buildWorkflowModel>) {
+    const option = model.aiModeOptions.find((entry) => entry.id === 'local');
+    expect(option).toBeDefined();
+    return option!;
+  }
+
+  it('should report not-checked when a mode is selected but never probed', () => {
+    __testState.config['ai.provider'] = 'local';
+    const model = aiModeModel();
+    expect(localOption(model).status).toBe('not-checked');
+    expect(localOption(model).available).toBe(false);
+    const html = renderWorkflowHtml(model);
+    expect(html).toContain('Not checked');
+  });
+
+  it('should report connected only after a successful probe', () => {
+    __testState.config['ai.provider'] = 'local';
+    const state = new ExtensionState();
+    state.setAIStatus({ provider: 'local', model: 'qwen', baseUrl: 'http://localhost:11434', available: true });
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: '/ws',
+      requestedStep: 'ai-mode',
+    });
+    expect(localOption(model).status).toBe('connected');
+    expect(localOption(model).available).toBe(true);
+    expect(renderWorkflowHtml(model)).toContain('Connected');
+  });
+
+  it('should report not-reachable when the probe failed despite selection', () => {
+    __testState.config['ai.provider'] = 'local';
+    const state = new ExtensionState();
+    state.setAIStatus({ provider: 'local', model: 'qwen', baseUrl: 'http://localhost:11434', available: false });
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: '/ws',
+      requestedStep: 'ai-mode',
+    });
+    expect(localOption(model).status).toBe('not-reachable');
+    expect(localOption(model).available).toBe(false);
+    const html = renderWorkflowHtml(model);
+    expect(html).toContain('Not reachable');
+    expect(html).toContain('unreachable');
+  });
+
+  it('should keep deterministic mode always available', () => {
+    const model = aiModeModel();
+    const none = model.aiModeOptions.find((entry) => entry.id === 'none');
+    expect(none?.status).toBe('connected');
+    expect(none?.available).toBe(true);
+  });
+});

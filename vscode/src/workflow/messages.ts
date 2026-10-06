@@ -17,6 +17,7 @@ export const WORKFLOW_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   'workflow.apply',
   'workflow.verify',
   'workflow.testProject',
+  'workflow.smokeTest',
   'workflow.returnToPlan',
   'workflow.retryInit',
   'workflow.restart',
