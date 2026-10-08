@@ -16,13 +16,12 @@ export const WORKFLOW_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   'workflow.denyAll',
   'workflow.apply',
   'workflow.verify',
-  'workflow.testProject',
-  'workflow.smokeTest',
+  'workflow.finish',
   'workflow.returnToPlan',
   'workflow.retryInit',
   'workflow.restart',
-  'workflow.goBack',
-  'workflow.goForward',
+  'workflow.gotoAiMode',
+  'workflow.gotoProject',
 ]);
 
 const COMMANDS_REQUIRING_ACTION_ID: ReadonlySet<string> = new Set(['workflow.toggleApproval']);
@@ -70,8 +69,8 @@ export function validateWorkflowMessage(message: unknown): ValidatedWorkflowMess
   return { command };
 }
 
-export function isWorkflowNavigation(command: string): command is 'workflow.goBack' | 'workflow.goForward' {
-  return command === 'workflow.goBack' || command === 'workflow.goForward';
+export function isWorkflowGoto(command: string): command is 'workflow.gotoAiMode' | 'workflow.gotoProject' {
+  return command === 'workflow.gotoAiMode' || command === 'workflow.gotoProject';
 }
 
 export { isWorkflowStep };

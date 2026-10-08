@@ -291,7 +291,7 @@ function renderAiModeStep(model: WorkflowModel): string {
       </div>
       <div class="wf-btn-group">
         <button class="wf-btn secondary" data-command="workflow.retryAi">Check Connection</button>
-        <button class="wf-btn primary" data-command="workflow.goForward">Continue to Project</button>
+        <button class="wf-btn primary" data-command="workflow.gotoProject">Continue to Project</button>
       </div>
     </div>
   `;
@@ -314,8 +314,8 @@ function renderProjectStep(model: WorkflowModel): string {
       </div>
       ${
         hasWorkspace
-          ? '<div class="wf-btn-group"><button class="wf-btn secondary" data-command="workflow.goBack">← Back</button><button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button></div>'
-          : '<p class="wf-notice">Open a folder in VS Code to analyze a project. ResolveIt works on the workspace you already have open &mdash; there is nothing to upload.</p>'
+          ? '<p class="wf-card-subtitle">ResolveIt works on the folder you already have open &mdash; there is nothing to upload. Checking your project looks for missing tools, broken setup, and configuration problems.</p><div class="wf-btn-group"><button class="wf-btn secondary" data-command="workflow.gotoAiMode">← AI Mode</button><button class="wf-btn primary" data-command="workflow.analyze">Check Your Project</button></div>'
+          : '<p class="wf-notice">Open a folder in VS Code to check a project. ResolveIt works on the workspace you already have open &mdash; there is nothing to upload.</p>'
       }
     </div>
   `;
@@ -342,7 +342,8 @@ function renderAnalyzeStep(model: WorkflowModel): string {
   // ever renders before or during a run.
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">Analyzing Project</h2>
+      <h2 class="wf-section-title">Check Your Project</h2>
+      <p class="wf-card-subtitle">ResolveIt looks for missing tools, broken setup, and configuration problems. Nothing is changed during this step.</p>
       <div class="wf-card">
         <div class="wf-action-list">${stepsHtml}</div>
         <div class="wf-progress">
@@ -352,50 +353,76 @@ function renderAnalyzeStep(model: WorkflowModel): string {
       </div>
       <div class="wf-btn-group">
         ${started
-          ? '<button class="wf-btn primary" disabled>Analyzing…</button><button class="wf-btn secondary" data-command="workflow.cancelAnalyze">Cancel</button>'
-          : '<button class="wf-btn secondary" data-command="workflow.goBack">← Back</button><button class="wf-btn primary" data-command="workflow.analyze">Analyze Project</button>'}
+          ? '<button class="wf-btn primary" disabled>Checking…</button><button class="wf-btn secondary" data-command="workflow.cancelAnalyze">Cancel</button>'
+          : '<button class="wf-btn secondary" data-command="workflow.gotoProject">← Project</button><button class="wf-btn primary" data-command="workflow.analyze">Check Your Project</button>'}
       </div>
     </div>
   `;
 }
 
+/**
+ * The Status screen answers one question: "Did ResolveIt find problems in
+ * this project?" It offers exactly one primary next step, so a beginner
+ * always knows what to do. Technical evidence stays available on later
+ * screens; nothing here launches the user's application.
+ */
+function renderDependencySummary(statusSummary: WorkflowModel['statusSummary']): string {
+  const deps = statusSummary.dependencies;
+  const toInstall = deps.missing + deps.mismatched;
+  const lines = [
+    `<div style="display: flex; align-items: center; gap: 12px;"><span class="wf-badge">≡</span><span>Requirements: <strong>${deps.required}</strong></span></div>`,
+    `<div style="display: flex; align-items: center; gap: 12px;"><span class="wf-badge success">✓</span><span>Installed dependencies: <strong>${deps.satisfied}</strong></span></div>`,
+    `<div style="display: flex; align-items: center; gap: 12px;"><span class="wf-badge warning">↓</span><span>Dependencies to install: <strong>${toInstall}</strong></span></div>`,
+  ];
+  for (const name of deps.missingNames) {
+    lines.push(
+      `<div style="display: flex; align-items: center; gap: 12px;"><span class="wf-badge error">✗</span><span>Missing dependency: <strong>${escapeHtml(name)}</strong> — required but not currently installed.</span></div>`
+    );
+  }
+  for (const name of deps.mismatchedNames) {
+    lines.push(
+      `<div style="display: flex; align-items: center; gap: 12px;"><span class="wf-badge error">✗</span><span>Mismatched dependency: <strong>${escapeHtml(name)}</strong> — installed but does not satisfy what the project requires.</span></div>`
+    );
+  }
+  return lines.join('');
+}
+
 function renderStatusStep(model: WorkflowModel): string {
   const { statusSummary } = model;
   const healthy = statusSummary.blockingIssues === 0;
+  const badge = healthy
+    ? '<span class="wf-badge success">✓ Healthy</span>'
+    : '<span class="wf-badge warning">⚠ Problems Found</span>';
+  const deps = statusSummary.dependencies;
+  const explanation = healthy
+    ? deps.required > 0
+      ? 'All required dependencies are already installed. No changes are needed.'
+      : 'ResolveIt did not find any problems that require repair.'
+    : deps.missing > 0
+      ? `ResolveIt found that this project requires ${escapeHtml(deps.missingNames[0] ?? 'a dependency')}, but it is not currently installed.`
+      : 'ResolveIt found problems that may affect this project.';
+  const primary = healthy
+    ? '<button class="wf-btn primary" data-command="workflow.verify">Verify Project</button>'
+    : '<button class="wf-btn primary" data-command="workflow.generatePlan">View Repair Plan</button>';
+  const primaryHint = healthy
+    ? '<p class="wf-card-subtitle">Verify Project checks the problems ResolveIt previously found and confirms whether they are fixed. Nothing is started or launched.</p>'
+    : '<p class="wf-card-subtitle">The repair plan lists each proposed fix. Nothing is changed until you approve and apply it.</p>';
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">Project Status ${healthy ? '<span class="wf-badge success">✓ Healthy</span>' : ''}</h2>
+      <h2 class="wf-section-title">Project Status ${badge}</h2>
       <div class="wf-card">
         <div style="display: flex; flex-direction: column; gap: 12px;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge">≡</span>
-            <span>Requirements: <strong>${statusSummary.requirementsTotal}</strong></span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge info">i</span>
-            <span>Informational findings: <strong>${statusSummary.infoFindings}</strong></span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge warning">⚠</span>
-            <span>Issues: <strong>${statusSummary.issues}</strong></span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <span class="wf-badge error">✗</span>
-            <span>Blocking issues: <strong>${statusSummary.blockingIssues}</strong></span>
-          </div>
+          ${renderDependencySummary(statusSummary)}
         </div>
-        <p class="wf-card-subtitle">Informational findings are inventory notes (for example per-package dependency observations), not problems. Only issues at warning level and above need attention; only blocking issues stop a project from working.</p>
-        ${healthy ? '<p class="wf-card-subtitle">Project looks healthy. No blocking diagnostics found. You can re-check diagnostics or run the project test.</p>' : ''}
+        <p>${explanation}</p>
+        <p class="wf-card-subtitle">Requirements are what your project declares (for example, packages listed in package.json). Installed is what ResolveIt actually found in your project. Dependencies to install is what ResolveIt still needs to fix.</p>
+        ${primaryHint}
       </div>
       <div class="wf-btn-group">
-        ${statusSummary.blockingIssues > 0
-          ? '<button class="wf-btn primary" data-command="workflow.generatePlan">Generate Repair Plan</button>'
-          : '<button class="wf-btn primary" data-command="workflow.verify">Re-check Project</button><button class="wf-btn secondary" data-command="workflow.testProject">Test Project</button><button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>'}
-        <button class="wf-btn secondary" data-command="workflow.reanalyze">Re-analyze</button>
+        ${primary}
+        <button class="wf-btn secondary" data-command="workflow.reanalyze" title="Run the checks again, for example after you changed files yourself">Check Again</button>
       </div>
     </div>
-    ${renderProjectTest(model)}
-    ${renderProjectSmoke(model)}
   `;
 }
 
@@ -521,10 +548,11 @@ function renderRepairPlanStep(model: WorkflowModel): string {
         <div class="wf-action-list">${actionsHtml}</div>
       </div>
       <div class="wf-btn-group">
-        <button class="wf-btn primary" data-command="workflow.approveAll" ${repairPlan.pendingCount - repairPlan.systemPendingCount <= 0 ? 'disabled' : ''}>Approve All</button>
+        <button class="wf-btn secondary" data-command="workflow.approveAll" ${repairPlan.pendingCount - repairPlan.systemPendingCount <= 0 ? 'disabled' : ''}>Approve All</button>
         <button class="wf-btn secondary" data-command="workflow.denyAll" ${repairPlan.deniedCount === repairPlan.totalCount ? 'disabled' : ''}>Deny All</button>
-        <button class="wf-btn primary" data-command="workflow.apply" ${repairPlan.approvedCount === 0 ? 'disabled' : ''}>Apply Approved Changes</button>
+        <button class="wf-btn primary" data-command="workflow.apply" ${repairPlan.approvedCount === 0 ? 'disabled' : ''} title="Apply the fixes you approved">Fix These Problems</button>
       </div>
+      ${repairPlan.approvedCount === 0 ? '<p class="wf-card-subtitle">Approve at least one fix above to continue. System-level fixes always need your individual review.</p>' : ''}
     </div>
   `;
 }
@@ -551,7 +579,8 @@ function renderApplyStep(model: WorkflowModel): string {
 
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">Applying Changes</h2>
+      <h2 class="wf-section-title">Applying Fixes</h2>
+      <p class="wf-card-subtitle">ResolveIt is applying the fixes you approved. Nothing else changes.</p>
       <div class="wf-card">
         <div class="wf-progress">
           <div class="wf-progress-bar"><div class="wf-progress-fill" style="width: ${total > 0 ? completed / total * 100 : 0}%"></div></div>
@@ -563,91 +592,38 @@ function renderApplyStep(model: WorkflowModel): string {
         <div class="wf-action-list">${actionsHtml}</div>
       </div>
       <div class="wf-btn-group">
-        <button class="wf-btn primary" data-command="workflow.goForward" ${completed < total ? 'disabled' : ''}>Continue to Verify</button>
+        <button class="wf-btn primary" data-command="workflow.verify" ${completed < total ? 'disabled' : ''} title="Check whether the fixes worked">Check Whether the Fixes Worked</button>
         <button class="wf-btn secondary" data-command="workflow.returnToPlan">Return to Repair Plan</button>
       </div>
     </div>
   `;
 }
 
-function renderProjectTest(model: WorkflowModel): string {
-  const test = model.projectTest;
-  if (!test) {
-    return '';
-  }
-  const badge = test.running
-    ? '<span class="wf-badge info">Running</span>'
-    : test.success
-      ? '<span class="wf-badge success">Passed</span>'
-      : '<span class="wf-badge error">Failed</span>';
-  return `
-    <div class="wf-section">
-      <h2 class="wf-section-title">Test Project ${badge}</h2>
-      <div class="wf-card">
-        <p class="wf-card-subtitle">${escapeHtml(test.commandLabel ?? 'No safe project test command was detected.')}</p>
-        <p>${escapeHtml(test.message)}</p>
-        ${test.output ? `<pre class="wf-output">${escapeHtml(test.output)}</pre>` : ''}
-      </div>
-      <div class="wf-btn-group">
-        <button class="wf-btn secondary" data-command="workflow.testProject" ${test.running ? 'disabled' : ''}>
-          ${test.running ? 'Testing…' : 'Run Again'}
-        </button>
-        <button class="wf-btn primary" data-command="workflow.restart">Start Over</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderProjectSmoke(model: WorkflowModel): string {
-  const smoke = model.projectSmoke;
-  if (!smoke) {
-    return '';
-  }
-  const badge = smoke.running
-    ? '<span class="wf-badge info">Running</span>'
-    : smoke.success
-      ? '<span class="wf-badge success">Responding</span>'
-      : '<span class="wf-badge error">Not responding</span>';
-  return `
-    <div class="wf-section">
-      <h2 class="wf-section-title">Run / Smoke Test ${badge}</h2>
-      <div class="wf-card">
-        <p class="wf-card-subtitle">${escapeHtml(smoke.commandLabel ?? 'No safe run command was detected (looked for npm "dev" or "start" scripts).')}</p>
-        <p>${escapeHtml(smoke.message)}</p>
-        ${smoke.output ? `<pre class="wf-output">${escapeHtml(smoke.output)}</pre>` : ''}
-      </div>
-      <div class="wf-btn-group">
-        <button class="wf-btn secondary" data-command="workflow.smokeTest" ${smoke.running ? 'disabled' : ''}>
-          ${smoke.running ? 'Checking…' : 'Run Again'}
-        </button>
-        <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
-      </div>
-    </div>
-  `;
-}
-
+/**
+ * Verify means: check whether the problems ResolveIt previously identified
+ * are now resolved (requirement satisfied, dependency installed, file exists,
+ * configuration fixed). It never starts the user's application.
+ */
 function renderVerifyStep(model: WorkflowModel): string {
   // Reachable only after a clean verification (remaining === 0); a failing
   // verification derives the Failed stage instead.
   const { verifyResult } = model;
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">Verification <span class="wf-badge success">Passed</span></h2>
+      <h2 class="wf-section-title">Verify Changes <span class="wf-badge success">Passed</span></h2>
       <div class="wf-card">
         <div style="display: flex; align-items: center; gap: 12px;">
           <span class="wf-badge success">✓</span>
           <span>${escapeHtml(verifyResult.details)}</span>
         </div>
-        <p class="wf-card-subtitle">Verification re-ran diagnostics against the whole project. Next, prove the project actually works: run its tests, its smoke check, or both.</p>
+        <p>ResolveIt checked the problems it previously found and confirmed whether they are fixed.</p>
+        <p class="wf-card-subtitle">This re-checks your project setup (for example: is the missing tool now installed, is the required file now present, is the configuration problem gone). It does not start your application.</p>
       </div>
       <div class="wf-btn-group">
-        <button class="wf-btn primary" data-command="workflow.testProject">Test Project</button>
-        <button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>
+        <button class="wf-btn primary" data-command="workflow.finish">Finish</button>
         <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
       </div>
     </div>
-    ${renderProjectTest(model)}
-    ${renderProjectSmoke(model)}
   `;
 }
 
@@ -655,28 +631,20 @@ function renderSuccessStep(model: WorkflowModel): string {
   const changes = model.applyProgress.actions.filter((action) => action.status === 'success');
   const hadRepairs = model.applyProgress.total > 0;
   const changeSummary = changes.length
-    ? `<p>${changes.length} approved change${changes.length === 1 ? '' : 's'} applied and verified:</p>
+    ? `<p>${changes.length} approved fix${changes.length === 1 ? '' : 'es'} applied and checked:</p>
        <ul class="wf-list">${changes.map((action) => `<li>${escapeHtml(action.label)}</li>`).join('')}</ul>`
     : hadRepairs
-      ? '<p>Changes were applied and the remaining state verified below.</p>'
-      : '<p>Project looks healthy. No blocking diagnostics were found and nothing needed to change.</p>';
+      ? '<p>Fixes were applied and the result checked below.</p>'
+      : '<p>Project looks healthy. ResolveIt found no problems that require repair, and nothing needed to change.</p>';
   const verification = model.verifyResult;
-  const test = model.projectTest;
-  const smoke = model.projectSmoke;
   const evidence = [
-    `<li>Repairs applied: ${model.applyProgress.succeeded} succeeded, ${model.applyProgress.failed} failed</li>`,
-    `<li>Verification passed: ${verification.resolved} resolved, ${verification.remaining} remaining</li>`,
-    test
-      ? `<li>Project test ${test.success ? 'passed' : 'did not pass'}${test.commandLabel ? ` (${escapeHtml(test.commandLabel)})` : ''}</li>`
-      : '<li>Project test has not run</li>',
-    smoke
-      ? `<li>Smoke test ${smoke.success ? 'passed' : 'did not pass'}${smoke.commandLabel ? ` (${escapeHtml(smoke.commandLabel)})` : ''}${smoke.url ? ` — ${escapeHtml(smoke.url)} responded` : ''}</li>`
-      : '<li>Smoke test has not run</li>',
+    `<li>Fixes applied: ${model.applyProgress.succeeded} succeeded, ${model.applyProgress.failed} failed</li>`,
+    `<li>Final check passed: ${verification.resolved} resolved, ${verification.remaining} remaining</li>`,
   ].join('');
 
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">ResolveIt — Project Resolved <span class="wf-badge success">✓ Success</span></h2>
+      <h2 class="wf-section-title">Done <span class="wf-badge success">✓ Success</span></h2>
       <div class="wf-card">
         <ul class="wf-list">${evidence}</ul>
       </div>
@@ -687,26 +655,19 @@ function renderSuccessStep(model: WorkflowModel): string {
         </div>
       </div>
       <div class="wf-btn-group">
-        <button class="wf-btn primary" data-command="workflow.testProject">Test Project</button>
-        <button class="wf-btn secondary" data-command="workflow.smokeTest">Run / Smoke Test</button>
-        <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
+        <button class="wf-btn primary" data-command="workflow.restart">Start Over</button>
       </div>
     </div>
-    ${renderProjectTest(model)}
-    ${renderProjectSmoke(model)}
   `;
 }
 
 function renderFailedStep(model: WorkflowModel): string {
   const execution = model.applyProgress;
   const verification = model.verifyResult;
-  const test = model.projectTest;
-  const smoke = model.projectSmoke;
   const failedActions = execution.actions.filter((action) => action.status === 'failed');
   const succeededActions = execution.actions.filter((action) => action.status === 'success');
 
-  // Every applicable failure category is listed; a test failure never hides a
-  // verification failure and vice versa.
+  // Every applicable failure category is listed so nothing is hidden.
   const failureItems = model.failures
     .map(
       (failure) =>
@@ -716,7 +677,7 @@ function renderFailedStep(model: WorkflowModel): string {
   const failureList =
     failureItems !== ''
       ? `<ul class="wf-list">${failureItems}</ul>`
-      : '<p>Resolution failure: the workflow could not complete.</p>';
+      : '<p>Some problems remain. Go back to the repair plan to try again.</p>';
 
   const succeededList = succeededActions.length > 0
     ? `<p>Succeeded:</p><ul class="wf-list">${succeededActions.map((action) => `<li>${escapeHtml(action.label)}</li>`).join('')}</ul>`
@@ -725,20 +686,14 @@ function renderFailedStep(model: WorkflowModel): string {
     ? `<p>Failed:</p><ul class="wf-list">${failedActions.map((action) => `<li>${escapeHtml(action.label)}${action.error ? ` — ${escapeHtml(action.error)}` : ''}</li>`).join('')}</ul>`
     : '';
   const verificationLine = (verification.resolved > 0 || verification.remaining > 0)
-    ? `<p>Verification: ${verification.resolved} resolved, ${verification.remaining} remaining.</p>`
-    : '';
-  const testLine = test
-    ? `<p>Project test${test.commandLabel ? ` (${escapeHtml(test.commandLabel)})` : ''}: ${escapeHtml(test.message)}</p>`
-    : '';
-  const smokeLine = smoke
-    ? `<p>Smoke test${smoke.commandLabel ? ` (${escapeHtml(smoke.commandLabel)})` : ''}: ${escapeHtml(smoke.message)}</p>`
+    ? `<p>Final check: ${verification.resolved} fixed, ${verification.remaining} problem(s) remain.</p>`
     : '';
 
   return `
     <div class="wf-section">
-      <h2 class="wf-section-title">ResolveIt could not fully resolve the project <span class="wf-badge error">✗ Failed</span></h2>
+      <h2 class="wf-section-title">Problems Remain <span class="wf-badge error">✗ Not Finished</span></h2>
       <div class="wf-error">
-        <div class="wf-error-title">What failed</div>
+        <div class="wf-error-title">What still needs attention</div>
         <div>${failureList}</div>
         ${model.errorMessage ? `<div>${escapeHtml(model.errorMessage)}</div>` : ''}
       </div>
@@ -746,12 +701,9 @@ function renderFailedStep(model: WorkflowModel): string {
         ${succeededList}
         ${failedList}
         ${verificationLine}
-        ${testLine}
-        ${smokeLine}
       </div>
       <div class="wf-btn-group">
         <button class="wf-btn primary" data-command="workflow.returnToPlan">Return to Repair Plan</button>
-        <button class="wf-btn secondary" data-command="workflow.reanalyze">Re-analyze</button>
         <button class="wf-btn secondary" data-command="workflow.restart">Start Over</button>
       </div>
     </div>

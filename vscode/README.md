@@ -51,11 +51,11 @@ The primary UI is **one on-demand panel**: `ResolveIt: Open Workflow`. There are
 no sidebar views. A compact step indicator always shows where the user is:
 
 ```text
-AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify → Test → Done
+AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify → Done
 ```
 
-There are no generic Back/Next controls: every screen offers only the actions
-that actually transition from the current state.
+There are no generic Back/Next controls: every screen offers only the action
+that actually moves forward from the current stage.
 
 1. **AI Mode** — choose how ResolveIt reasons: Local AI (Ollama-compatible),
    External AI (OpenAI-compatible), or Deterministic / No AI. Each option shows
@@ -63,14 +63,21 @@ that actually transition from the current state.
    and "Connected" is only ever shown after a successful probe. Selecting a mode
    writes `resolveit.ai.provider`. API keys are never shown; they stay in
    environment variables / settings.
-2. **Project** — name, workspace path, detected ecosystems; multi-root
-   workspaces state explicitly that the first folder is analyzed.
+2. **Project** — name and workspace path. Checking your project looks for
+   missing tools, broken setup, and configuration problems; nothing is changed.
 3. **Analyze** — runs the Core pipeline (scan → environment → requirements →
-   diagnostics) with real per-phase progress and Cancel.
-4. **Status** — requirements, informational findings, issues (warning and
-   above), and blocking issues. Informational findings are inventory notes, not
-   problems. Healthy projects offer Re-check, Test, and Smoke actions directly.
-5. **Repair Plan** — every proposed action is a card with Action, Why, Target,
+   problems found) with real per-phase progress and Cancel.
+4. **Status** — answers three questions immediately: what does the project
+   require, what is already installed, and what does ResolveIt need to
+   change? Shows **Requirements**, **Installed dependencies**, and
+   **Dependencies to install**, established from the actual project install
+   tree — a declared requirement is never presented as proof of installation.
+   Internal diagnostic counters (issues, blocking issues, informational
+   findings) stay in the model, logs, and audit data but are not shown here.
+   A missing dependency names the package and offers **View Repair Plan**;
+   a fully satisfied project states that plainly and offers
+   **Verify Project**. One primary action, never a wall of buttons.
+5. **Repair Plan** — every proposed fix is a card with Action, Why, Target,
    Scope, Risk, Expected change, and Status. The plan is labelled truthfully:
    **AI-generated plan** only when the AI planner produced validated actions,
    otherwise **Deterministic repair plan**. Core rejection reasons, AI
@@ -83,26 +90,19 @@ that actually transition from the current state.
 7. **Apply** — per-action Pending / Succeeded / Failed progress. Denied actions
    are reported as **Skipped**, never as failed. Execution summaries
    distinguish approved / executed / succeeded / failed / skipped.
-8. **Verify** — re-runs Core diagnostics; shows resolved / remaining, then
-   offers Test and Smoke explicitly. A clean re-check of an untouched project
-   stays on Status: verification never manufactures the Success screen.
-9. **Test Project** — runs the project's own *terminating* test command
-   (`npm test`, `pytest -q`, `cargo test`, `go test ./...`, `dotnet test`,
-   `mvn test`, `gradle test`) through the Core safe command runner, guarded and
-   cancellable. Anything else reports plainly that no safe test command exists.
-10. **Run / Smoke Test** — launches the app's `dev` (preferred) or `start`
-    script, waits up to 60 seconds for localhost readiness (declared `--port`,
-    newly bound ports, then common defaults), performs an HTTP readiness check,
-    then always terminates the whole process tree. A server that stays alive is
-    success, never a timeout failure.
-11. **Success** — requires applied changes, clean verification, *and* a passed
-    test or smoke check, all shown as evidence, with Test / Smoke / Start Over
-    actions.
-12. **Failure** — lists every applicable failure category (execution,
-    verification, test, smoke) with its evidence, plus succeeded vs failed
+8. **Verify** — checks whether the problems ResolveIt previously found are now
+   resolved (requirement satisfied, dependency installed, file present,
+   configuration fixed). It never starts your application. A passed check
+   offers **Finish**, which reaches Done.
+9. **Done** — shows the fixes applied and the final check result, with a
+   **Start Over** action that genuinely resets the workflow to AI Mode.
+   Healthy projects reach Done without any repairs: Status → Verify → Done.
+10. **Failure ("Problems Remain")** — lists every applicable failure category
+    (execution, verification) with its evidence, plus succeeded vs failed
     changes, and offers **Return to Repair Plan**, which preserves the failure
-    reason and the user's previous decisions where still valid. Start Over
-    genuinely resets the workflow to AI Mode.
+    reason and the user's previous decisions where still valid. Verification
+    failure loops back correctly: Repair Plan → Apply → Verify, never a
+    dead end.
 
 Action states are mutually exclusive by construction: an action is exactly one
 of Awaiting approval, Approved, Denied, Executed, Failed, or Verified — a failed
@@ -221,9 +221,11 @@ redacted (API keys, bearer tokens). Raw stack traces are never the primary UI.
 
 The extension consumes only the public Core API (`../src/index.ts`): scanners,
 diagnostic engine, repair planner/executor, verification, agent runner/events,
-permission policy types, project-test runner, and AI config/providers. No deep
+permission policy types, and AI config/providers. No deep
 `src/...` imports, no duplicated engines, no shell execution for repairs. The Core remains authoritative
-for diagnostics, permissions, agent state, verification, and AI policy.
+for diagnostics, permissions, agent state, verification, and AI policy. (The
+Core project-test/smoke runner in `src/agent/project-test.ts` remains as an
+internal Core API but is not part of the user workflow.)
 
 ## Packaging validation
 
@@ -245,12 +247,6 @@ npm run validate-package
   nonce, no inline handlers, no `eval`, no local resource loading, an
   allowlisted command protocol, and approval messages validated against the
   current Core plan (unknown action IDs are ignored).
-- Test and smoke handlers are guarded against concurrent runs (a second run
-  while one is active is refused, never duplicated) and support cancellation,
-  which terminates the underlying process; smoke runs always terminate the
-  whole server process tree afterwards.
-- Smoke readiness is bounded (~60 s) and port-aware (declared ports, newly
-  bound ports, then common defaults); a server that stays alive is success.
 - Action types without a registered Core tool (`upgrade-runtime`,
   `install-tool`, `run-script`, ...) cannot auto-execute; approving one fails
   honestly at execution with the Core reason, and the failure screen offers

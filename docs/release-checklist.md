@@ -1,18 +1,19 @@
 # ResolveIt Release Checklist
 
 Validation record. The Phase 12 checklist is below; Phase 13/14 results are
-recorded in the second section; Phase 15 (workflow v2) results follow. All items
-passed on Windows (Node 24, VS Code 1.140.0) unless noted. Linux/macOS rest on
-unit coverage.
+recorded in the second section; Phase 15 (workflow v2) results follow; the
+final handoff record is at the end. All items passed on Windows (Node 24)
+unless noted. Linux/macOS rest on unit coverage.
 
 ## Automated suites (current)
 
-- [x] Core tests: 488/488 (`npm test`: 30 files, includes project-test,
-      lockfile-dependency-regression, and prompt-hints suites)
+- [x] Core tests: 501/501 (`npm test`: 31 files, includes project-test,
+      lockfile-dependency-regression, dependency-installed-state, and
+      prompt-hints suites)
 - [x] Core build (`npm run build`)
 - [x] Core typecheck (`npx tsc --noEmit`)
 - [x] Core lint (`npm run lint`)
-- [x] Extension tests: 169/169 (`cd vscode && npm test`: 9 files, includes
+- [x] Extension tests: 175/175 (`cd vscode && npm test`: 9 files, includes
       workflow-panel, workflow-workflow, workflow-ai, and ui suites)
 - [x] Extension build (`cd vscode && npm run build`)
 - [x] Extension typecheck (`npm run typecheck`)
@@ -27,8 +28,9 @@ unit coverage.
 - [x] VSIX installs into real VS Code; activation verified in the extension
       host log with no errors (`workspaceContains:package.json` trigger)
 - [x] Headless end-to-end run of the real bundle, success path: AI mode →
-      analyze → healthy status → deterministic plan → approve all → real
-      `npm install` → verify → real `npm test` → Success screen with evidence
+      analyze → status → deterministic plan → approve all → real
+      `npm install` → verify → Done screen with evidence (test/smoke launch
+      checks were later removed from the workflow; see handoff record)
 - [x] Headless end-to-end run of the real bundle, failure path: unexecutable
       action → honest failure screen (no Approved badge, no fake Verified) →
       Return to Repair Plan with the failure reason preserved
@@ -49,19 +51,48 @@ unit coverage.
 
 ## Correction-pass validation (workflow semantics audit)
 
+Historical record: several items below were superseded by later passes
+(marked as such); the rest still hold.
+
 - [x] Baseline re-check stays on Status; no manufactured Success
+      (SUPERSEDED: a clean check now lands on Verify; Finish reaches Done)
 - [x] Successful execution + verification + test reaches Success with evidence
+      (SUPERSEDED: success path no longer involves test/smoke launch checks)
 - [x] Generic footer Back/Next removed; only contextual actions rendered
 - [x] Test vs Smoke split: terminating per-ecosystem tests vs launch/readiness/tree-kill smoke
+      (SUPERSEDED: both removed from the user workflow; Core runner remains
+      as an internal API only)
 - [x] Smoke readiness succeeds on arbitrary ports; timeout/exit-1 fail honestly; tree verified dead afterwards
+      (SUPERSEDED along with the smoke workflow)
 - [x] Test/smoke handlers guarded (no duplicates) and cancellable (process terminated)
+      (SUPERSEDED along with the test/smoke workflow)
 - [x] Status counts split: Requirements / Informational findings / Issues (warning+) / Blocking
+      (SUPERSEDED: Status now shows Requirements / Installed dependencies /
+      Dependencies to install; internal counters retained in the model)
 - [x] Lockfile entries aggregated per file with per-package evidence; dedup key includes origin
 - [x] AI badges reflect probed reachability only
 - [x] Start Over resets to AI Mode; return-to-plan carries decisions by fingerprint
 - [x] Failure screen lists every applicable category; Verified labeled as project-level
 - [x] Legacy repair/run/approval commands hidden from Command Palette discovery
 - [x] Every rendered workflow state reachable via legitimate transitions (tested)
+
+## Final handoff record (this baseline)
+
+- [x] Core: 31 files, 501 tests green on this tree (full `npm test`)
+- [x] Extension: 9 files, 175 tests green (per-file runs; fast files plus
+      workflow-ai, commands, integration)
+- [x] Core build, typecheck, lint; extension typecheck, build, lint,
+      validate-package, VSIX packaging
+- [x] Missing-dependency end-to-end proven against a real disposable project
+      (detect -> blocking diagnostic -> plan -> approve -> real `npm install`
+      -> verify resolved -> globals untouched)
+- [x] Root README rewritten for the handoff (pure ASCII, Mermaid workflow,
+      verified counts, no removed-feature claims)
+- [x] `docs/architecture.md` stale workflow claims corrected; history preserved
+- [ ] Machine-speed caveat: full-suite parallel runs on the handoff machine
+      intermittently time out real-pipeline tests (environment probing takes
+      ~50 s here vs seconds normally). All such timeouts pass in isolation;
+      no assertion failure observed. Not a code defect; recorded, not debugged.
 
 ## Phase 13/14 product validation
 

@@ -242,12 +242,22 @@ describe('workflow render states', () => {
     expect(html).toContain('&lt;img');
   });
 
-  it('renders a healthy project status without raw diagnostics', () => {
+  it('renders a dependency status without internal diagnostic counters', () => {
     const state = new ExtensionState();
     state.bindWorkspace('/ws');
     state.markScanned();
+    state.setRequirements([
+      {
+        projectId: 'p',
+        sourceFiles: ['package.json'],
+        requirements: [
+          { id: 'r1', ecosystem: 'node', type: 'package-dependency', name: 'express', versionConstraint: '^5.1.0', sourceFile: 'package.json' },
+        ],
+        parseErrors: [],
+      } as never,
+    ]);
     state.setDiagnostics([
-      { id: 'd1', severity: 'error', category: 'dependency', code: 'X', title: 't', message: 'm', evidence: [], source: 'dependency-resolver', timestamp: new Date(), metadata: {} } as Diagnostic,
+      { id: 'd1', severity: 'error', category: 'dependency', code: 'DEPENDENCY_PACKAGE_MISSING', title: 'Dependency: express', message: 'not currently installed', evidence: [], source: 'dependency-resolver', timestamp: new Date(), metadata: {}, requirement: { name: 'express', versionConstraint: '^5.1.0' } } as Diagnostic,
       { id: 'd2', severity: 'info', category: 'dependency', code: 'X', title: 't', message: 'm', evidence: [], source: 'dependency-resolver', timestamp: new Date(), metadata: {} } as Diagnostic,
     ]);
 
@@ -255,9 +265,13 @@ describe('workflow render states', () => {
     const html = renderWorkflowHtml(model);
 
     expect(html).toContain('Project Status');
-    expect(html).toContain('Informational findings: <strong>1</strong>');
-    expect(html).toContain('Issues: <strong>1</strong>');
-    expect(html).toContain('Blocking issues: <strong>1</strong>');
+    expect(html).toContain('Requirements: <strong>1</strong>');
+    expect(html).toContain('Installed dependencies: <strong>0</strong>');
+    expect(html).toContain('Dependencies to install: <strong>1</strong>');
+    expect(html).toContain('express ^5.1.0');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).not.toContain('Issues: <strong>');
     expect(html).toContain('data-command="workflow.generatePlan"');
   });
 
@@ -352,11 +366,11 @@ describe('workflow render states', () => {
 
     const model = buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: '/ws' });
     // No execution happened, so this is a baseline re-check, not a completed
-    // workflow: it must stay on Status, never jump to Project Resolved.
-    expect(model.currentStep).toBe('status');
+    // workflow: it must land on Verify, never jump to Done.
+    expect(model.currentStep).toBe('verify');
     const html = renderWorkflowHtml(model);
-    expect(html).not.toContain('Project Resolved');
-    expect(html).toContain('Project looks healthy');
+    expect(html).not.toContain('Final check passed');
+    expect(html).toContain('Verify Changes');
   });
 
   it('escapes untrusted project paths and error text', () => {

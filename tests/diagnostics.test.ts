@@ -209,21 +209,27 @@ describe('diagnostic engine regression', () => {
   });
 
   describe('dependency diagnostics', () => {
-    it('should report unknown state when no package inventory exists', async () => {
+    it('should report a missing dependency when the local tree has no such package', async () => {
       const engine = createDiagnosticEngine();
       const diags = await engine.runDiagnosticsWithContext(
         workspace(),
         environment(),
         [
           parsedRequirements([
-            requirement({ type: 'package-dependency', name: 'lodash', versionConstraint: '^4.17.21' }),
+            requirement({
+              type: 'package-dependency',
+              name: 'lodash',
+              versionConstraint: '^4.17.21',
+              metadata: { scope: 'production' },
+            }),
           ]),
         ]
       );
       expect(diags).toHaveLength(1);
       expect(diags[0]?.category).toBe('dependency');
-      expect(diags[0]?.severity).toBe('info');
-      expect(diags[0]?.message).toContain('unknown');
+      expect(diags[0]?.code).toBe('DEPENDENCY_PACKAGE_MISSING');
+      expect(diags[0]?.severity).toBe('error');
+      expect(diags[0]?.message).toContain('not currently installed');
     });
   });
 

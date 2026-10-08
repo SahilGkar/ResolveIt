@@ -1,5 +1,7 @@
 import type { Diagnostic } from '../core/models.js';
 import type { DiagnosticRule, VersionMatcher, DiagnosticContext } from '../core/interfaces.js';
+import { inspectNpmPackageInstallState } from './installed-packages.js';
+import type { NpmInstallState, NpmInstallStatus } from './installed-packages.js';
 import { DiagnosticEngineImpl, createDiagnosticEngine, versionMatcher } from './diagnostic-engine.js';
 import {
   runtimeDiagnosticRule,
@@ -145,6 +147,7 @@ export {
   DiagnosticEngineImpl,
   createDiagnosticEngine,
   versionMatcher,
+  inspectNpmPackageInstallState,
   runtimeDiagnosticRule,
   toolchainDiagnosticRule,
   containerDiagnosticRule,
@@ -154,4 +157,4 @@ export {
   projectDiagnosticRule,
   crossProjectDiagnosticRule,
 };
-export type { DiagnosticRule, VersionMatcher, DiagnosticContext };
+export type { DiagnosticRule, VersionMatcher, DiagnosticContext, NpmInstallState, NpmInstallStatus };

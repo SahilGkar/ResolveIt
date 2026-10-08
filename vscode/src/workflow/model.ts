@@ -52,22 +52,7 @@ export interface ActionView {
   readonly succeeded?: boolean;
 }
 
-function stepIndex(step: WorkflowStep): number {
-  return WORKFLOW_STEP_ORDER.indexOf(step);
-}
 
-export function adjacentStep(step: WorkflowStep, direction: 'forward' | 'back'): WorkflowStep | undefined {
-  const index = stepIndex(step);
-  const next = direction === 'forward' ? index + 1 : index - 1;
-  if (next < 0 || next >= WORKFLOW_STEP_ORDER.length) {
-    return undefined;
-  }
-  // 'failed' is a terminal presentation, never part of linear navigation.
-  if (WORKFLOW_STEP_ORDER[next] === 'failed') {
-    return undefined;
-  }
-  return WORKFLOW_STEP_ORDER[next];
-}
 
 /**
  * What the UI may claim about a provider option. `available` is true only for
@@ -109,6 +94,15 @@ export interface WorkflowModel {
     readonly issues: number;
     /** Blocking issues: error/critical. */
     readonly blockingIssues: number;
+    /** Declared vs actually-installed project dependencies, from Core evidence. */
+    readonly dependencies: {
+      readonly required: number;
+      readonly satisfied: number;
+      readonly missing: number;
+      readonly mismatched: number;
+      readonly missingNames: ReadonlyArray<string>;
+      readonly mismatchedNames: ReadonlyArray<string>;
+    };
   };
   readonly repairPlan: {
     readonly plan: RepairPlan | undefined;
@@ -136,30 +130,6 @@ export interface WorkflowModel {
     readonly failed: number;
     readonly actions: ReadonlyArray<{ label: string; status: 'pending' | 'running' | 'success' | 'failed'; error?: string }>;
   };
-  readonly projectTest?: {
-    readonly running: boolean;
-    readonly commandLabel?: string;
-    readonly attempted: boolean;
-    readonly success: boolean;
-    readonly exitCode: number;
-    readonly output: string;
-    readonly message: string;
-    readonly cancelled?: boolean;
-  };
-  readonly projectSmoke?: {
-    readonly running: boolean;
-    readonly commandLabel?: string;
-    readonly attempted: boolean;
-    readonly started: boolean;
-    readonly listening: boolean;
-    readonly responded: boolean;
-    readonly success: boolean;
-    readonly port?: number;
-    readonly url?: string;
-    readonly output: string;
-    readonly message: string;
-    readonly cancelled?: boolean;
-  };
   readonly verifyResult: {
     readonly success: boolean;
     readonly resolved: number;
@@ -172,7 +142,7 @@ export interface WorkflowModel {
 }
 
 export interface WorkflowFailure {
-  readonly kind: 'execution' | 'verification' | 'test' | 'smoke';
+  readonly kind: 'execution' | 'verification';
   readonly title: string;
   readonly detail: string;
 }
@@ -226,7 +196,7 @@ function getAnalyzeProgress(state: ExtensionState): WorkflowModel['analyzeProgre
     { label: 'Project discovered', done: state.getHasScanned(), current: isAnalyzing && !state.getHasScanned() },
     { label: 'Requirements scanned', done: state.getRequirements().length > 0, current: isAnalyzing && state.getHasScanned() && state.getRequirements().length === 0 },
     { label: 'Environment inspected', done: !!state.getEnvironment(), current: isAnalyzing && state.getRequirements().length > 0 && !state.getEnvironment() },
-    { label: 'Diagnostics generated', done: state.getDiagnostics().length > 0, current: isAnalyzing && !!state.getEnvironment() && state.getDiagnostics().length === 0 },
+    { label: 'Problems found', done: state.getDiagnostics().length > 0, current: isAnalyzing && !!state.getEnvironment() && state.getDiagnostics().length === 0 },
   ];
 
   return {
@@ -234,6 +204,50 @@ function getAnalyzeProgress(state: ExtensionState): WorkflowModel['analyzeProgre
     completed: state.getHasScanned() && state.getDiagnostics().length > 0,
     started: isAnalyzing,
     steps,
+  };
+}
+
+function getDependencySummary(state: ExtensionState): WorkflowModel['statusSummary']['dependencies'] {
+  const requirements = state.getRequirements().flatMap(r => r.requirements);
+  // Declared requirements: direct package dependencies. Managed lockfile and
+  // transitive entries are inventory, not requirements; optional entries are
+  // never repair problems. Managed here mirrors the Core dependency rule so
+  // the counts agree with the diagnostics the Core actually emits.
+  const declared = requirements.filter(
+    (req) =>
+      req.type === 'package-dependency' &&
+      req.origin !== 'lockfile' &&
+      req.origin !== 'transitive' &&
+      req.metadata?.['indirect'] !== true &&
+      req.optional !== true
+  );
+  const diagnostics = state.getDiagnostics();
+  const namesOf = (code: string): ReadonlyArray<string> => {
+    const names: string[] = [];
+    for (const diag of diagnostics) {
+      if (diag.code !== code) {
+        continue;
+      }
+      const label = diag.requirement
+        ? `${diag.requirement.name}${diag.requirement.versionConstraint ? ` ${diag.requirement.versionConstraint}` : ''}`
+        : diag.title;
+      if (!names.includes(label)) {
+        names.push(label);
+      }
+    }
+    return names.slice(0, 10);
+  };
+  const missingNames = namesOf('DEPENDENCY_PACKAGE_MISSING');
+  const mismatchedNames = namesOf('DEPENDENCY_PACKAGE_VERSION_MISMATCH');
+  const missing = missingNames.length;
+  const mismatched = mismatchedNames.length;
+  return {
+    required: declared.length,
+    satisfied: Math.max(0, declared.length - missing - mismatched),
+    missing,
+    mismatched,
+    missingNames,
+    mismatchedNames,
   };
 }
 
@@ -249,6 +263,7 @@ function getStatusSummary(state: ExtensionState): WorkflowModel['statusSummary']
     infoFindings: info,
     issues,
     blockingIssues: blocking,
+    dependencies: getDependencySummary(state),
   };
 }
 
@@ -431,18 +446,24 @@ export function resolveCurrentStep(state: ExtensionState, input: WorkflowModelIn
   return derived;
 }
 
+/**
+ * Resolve which stage to display from real Core results.
+ *
+ * Reachable stages:
+ * - Healthy project: status → verify → success (Done)
+ * - Unhealthy project: status → repair-plan → apply → verify → success (Done)
+ * - Verification failure: verify/apply → failed → repair-plan → apply → verify
+ * - Start Over: success/failed → ai-mode
+ *
+ * Application startup (dev/start scripts, localhost readiness) never gates any
+ * transition: ResolveIt diagnoses and repairs projects; it does not launch apps.
+ */
 function deriveStep(state: ExtensionState, hasWorkspace: boolean): WorkflowStep {
   const hasPlan = state.getRepairPlan() !== undefined;
   const hasExecution = state.getExecution() !== undefined;
   const verification = state.getLastVerification();
   const hasError = state.getLastError() !== undefined;
   const hasScanned = state.getHasScanned();
-  const test = state.getProjectTest();
-  const smoke = state.getProjectSmoke();
-  const testFailed = test !== undefined && test.attempted && !test.success && !test.running;
-  const smokeFailed = smoke !== undefined && smoke.attempted && !smoke.success && !smoke.running;
-  const testPassed = test !== undefined && test.attempted && test.success && !test.running;
-  const smokePassed = smoke !== undefined && smoke.attempted && smoke.success && !smoke.running;
 
   if (hasError && verification === undefined) {
     return 'failed';
@@ -451,24 +472,12 @@ function deriveStep(state: ExtensionState, hasWorkspace: boolean): WorkflowStep 
     if (verification.remaining.length > 0) {
       return 'failed';
     }
-    if (!hasExecution) {
-      // A baseline re-check on an untouched project proves nothing was broken,
-      // but it is not a completed workflow. Stay on Status; never manufacture
-      // a Success screen from zero changes.
-      return 'status';
-    }
-    if (testFailed || smokeFailed) {
-      return 'failed';
-    }
-    if (testPassed || smokePassed) {
+    // A clean verification lands on the Verify stage, which explains what was
+    // checked. The user finishes it explicitly, which derives Done (success).
+    if (state.isWorkflowCompleted()) {
       return 'success';
     }
-    // Applied and verified, but no test/smoke validation yet: the reachable
-    // verify stage, which offers Test and Smoke explicitly.
     return 'verify';
-  }
-  if (testFailed || smokeFailed) {
-    return 'failed';
   }
   if (hasExecution) {
     return 'apply';
@@ -478,10 +487,28 @@ function deriveStep(state: ExtensionState, hasWorkspace: boolean): WorkflowStep 
   }
   if (hasScanned) {
     // Both problematic and healthy projects land on Status: it shows the
-    // summary either way, and Success is reserved for a completed workflow.
+    // summary either way, and Done is reserved for a finished workflow.
     return 'status';
   }
   return hasWorkspace ? 'analyze' : 'project';
+}
+
+/**
+ * Best available project display name. Prefers a detected project name, then
+ * falls back to the workspace folder name (an open folder is always a valid
+ * project context), and only then to a generic placeholder. Discovery
+ * semantics are untouched; this is display-only.
+ */
+export function displayProjectName(detected: string | undefined, workspaceRoot: string): string {
+  if (detected !== undefined && detected.trim() !== '' && detected !== '(no projects)') {
+    return detected;
+  }
+  const segments = workspaceRoot.split(/[/\\]+/).filter((segment) => segment !== '');
+  const last = segments[segments.length - 1];
+  if (last !== undefined && last !== '') {
+    return last;
+  }
+  return '(no project detected)';
 }
 
 export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelInput): WorkflowModel {
@@ -495,7 +522,7 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
   const aiStatus = state.getAIStatus();
   const aiModeOptions = getAIModeOptions(aiConfig, aiStatus ? { available: aiStatus.available, provider: aiStatus.provider, model: aiStatus.model, baseUrl: aiStatus.baseUrl } : undefined);
   
-  const projectName = state.getProjectName() ?? '(no project detected)';
+  const projectName = displayProjectName(state.getProjectName(), input.workspaceRoot);
   const projectRoot = input.workspaceRoot;
 
   const currentStep = resolveCurrentStep(state, input);
@@ -521,8 +548,6 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
     repairPlan,
     applyProgress,
     verifyResult,
-    projectTest: state.getProjectTest(),
-    projectSmoke: state.getProjectSmoke(),
     failures,
     errorMessage: state.getLastError()?.message,
   };
@@ -552,22 +577,6 @@ function getFailures(state: ExtensionState): ReadonlyArray<WorkflowFailure> {
       kind: 'verification',
       title: 'Verification failure',
       detail: `${verification.resolved.length} resolved, ${verification.remaining.length} blocking diagnostic(s) remain.`,
-    });
-  }
-  const test = state.getProjectTest();
-  if (test && test.attempted && !test.success && !test.running) {
-    failures.push({
-      kind: 'test',
-      title: 'Project test failure',
-      detail: `${test.commandLabel ?? 'Project test'}: ${test.message}`,
-    });
-  }
-  const smoke = state.getProjectSmoke();
-  if (smoke && smoke.attempted && !smoke.success && !smoke.running) {
-    failures.push({
-      kind: 'smoke',
-      title: 'Smoke test failure',
-      detail: `${smoke.commandLabel ?? 'Smoke test'}: ${smoke.message}`,
     });
   }
   return failures;

@@ -9,6 +9,7 @@ import { CoreClient } from '../src/core.js';
 import { createWorkflowCommandHandlers, type WorkflowCommandContext } from '../src/workflow/commands.js';
 import { buildWorkflowModel, resolveActionLifecycle } from '../src/workflow/model.js';
 import { renderWorkflowHtml } from '../src/workflow/render.js';
+import { WORKFLOW_ALLOWED_COMMANDS } from '../src/workflow/messages.js';
 import type { RepairAction, RepairPlan, RepairResult } from '../../src/index.js';
 
 function makeAction(id: string, description = `Install ${id}`): RepairAction {
@@ -54,8 +55,6 @@ function harness(options: {
     aiRejections: string[];
     manualActions: never[];
   }>;
-  testProject?: (root: string) => Promise<unknown>;
-  smokeProject?: (root: string, opts?: unknown) => Promise<unknown>;
   aiProvider?: 'none' | 'local' | 'external';
   root?: string;
   tokenTap?: (trigger: () => void) => void;
@@ -84,22 +83,6 @@ function harness(options: {
     planRepairsSmart:
       options.planRepairsSmart ??
       (async () => ({ plan: makePlan(2), diagnostics: [] as never[], aiUsed: false, aiRejections: [] as string[], manualActions: [] as never[] })),
-    testProject: options.testProject ?? (async () => ({ attempted: true, success: true, exitCode: 0, stdout: 'ok', stderr: '', message: 'Project test succeeded.' })),
-    smokeProject:
-      options.smokeProject ??
-      (async () => ({
-        attempted: true,
-        command: { label: 'npm run dev' },
-        started: true,
-        listening: true,
-        responded: true,
-        success: true,
-        port: 3000,
-        url: 'http://localhost:3000/',
-        timedOut: false,
-        output: 'up',
-        message: 'Application started and responded successfully (http://localhost:3000/).',
-      })),
   };
 
   const ctx: WorkflowCommandContext = {
@@ -415,103 +398,7 @@ describe('verification failure returns to the repair plan', () => {
   });
 });
 
-describe('test project runs the real project command', () => {
-  it('should report a successful project test', async () => {
-    const testProject = async () => ({
-      attempted: true,
-      success: true,
-      exitCode: 0,
-      stdout: 'all tests passed',
-      stderr: '',
-      message: 'Project test succeeded.',
-      command: { label: 'npm test' },
-    });
-    const h = harness({ testProject });
-    await h.handlers['workflow.testProject']?.();
-
-    const test = h.state.getProjectTest();
-    expect(test?.attempted).toBe(true);
-    expect(test?.success).toBe(true);
-    expect(test?.commandLabel).toBe('npm test');
-    expect(h.info.join(' ')).toContain('Project test succeeded');
-  });
-
-  it('should report a failed project test', async () => {
-    const testProject = async () => ({
-      attempted: true,
-      success: false,
-      exitCode: 1,
-      stdout: '',
-      stderr: '1 test failed',
-      message: 'Project test failed with exit code 1.',
-      command: { label: 'npm test' },
-    });
-    const h = harness({ testProject });
-    await h.handlers['workflow.testProject']?.();
-
-    const test = h.state.getProjectTest();
-    expect(test?.success).toBe(false);
-    expect(test?.exitCode).toBe(1);
-    expect(test?.output).toContain('1 test failed');
-    expect(h.warnings.join(' ')).toContain('exit code 1');
-  });
-
-  it('should say so plainly when no safe test command exists', async () => {
-    const testProject = async () => ({
-      attempted: false,
-      success: false,
-      exitCode: -1,
-      stdout: '',
-      stderr: '',
-      message: 'No safe project test command was detected.',
-    });
-    const h = harness({ testProject });
-    await h.handlers['workflow.testProject']?.();
-
-    const test = h.state.getProjectTest();
-    expect(test?.attempted).toBe(false);
-    expect(test?.message).toBe('No safe project test command was detected.');
-    expect(h.warnings.join(' ')).toContain('No safe project test command');
-  });
-
-  it('should render the project test result', async () => {
-    const h = harness({
-      testProject: async () => ({
-        attempted: true,
-        success: true,
-        exitCode: 0,
-        stdout: 'ok',
-        stderr: '',
-        message: 'Project test succeeded.',
-        command: { label: 'npm test' },
-      }),
-    });
-    // Verification passed after an execution, so the workflow can reach the
-    // success screen where the Test Project result renders.
-    h.state.setRepairPlan(makePlan(1));
-    h.state.setApproval('a1', true);
-    h.state.setExecution({
-      results: [{ action: makeAction('a1'), result: { success: true } }],
-      success: true,
-      timestamp: new Date(),
-    });
-    h.state.setLastVerification({ resolved: ['x'], remaining: [], timestamp: new Date() });
-    await h.handlers['workflow.testProject']?.();
-
-    const model = buildWorkflowModel(h.state, {
-      hasWorkspace: true,
-      workspaceName: 'ws',
-      workspaceRoot: 'C:\\ws',
-    });
-    expect(model.currentStep).toBe('success');
-    const html = renderWorkflowHtml(model);
-    expect(html).toContain('Test Project');
-    expect(html).toContain('npm test');
-    expect(html).toContain('Project test succeeded.');
-  });
-});
-
-describe('core project test detection', () => {
+describe('core project test detection (internal API, not part of the workflow)', () => {
   it('should detect an npm test script', async () => {
     const root = await mkdtemp(join(tmpdir(), 'resolveit-projtest-'));
     try {
@@ -643,8 +530,9 @@ describe('contextual navigation has no dead controls', () => {
     expect(model.currentStep).toBe('analyze');
     const html = renderWorkflowHtml(model);
     expect(html).not.toContain('data-command="workflow.goForward"');
+    expect(html).not.toContain('data-command="workflow.goBack"');
     expect(html).toContain('data-command="workflow.analyze"');
-    expect(html).toContain('data-command="workflow.goBack"');
+    expect(html).toContain('data-command="workflow.gotoProject"');
   });
 
   it('should move on to Status once analysis found issues', () => {
@@ -673,11 +561,14 @@ describe('contextual navigation has no dead controls', () => {
     });
     expect(model.currentStep).toBe('status');
     // Post-analysis stages navigate by state, not by generic buttons: the
-    // status screen offers Generate Repair Plan and no dead Next control.
+    // status screen offers one primary action and no generic Back/Next.
     const html = renderWorkflowHtml(model);
     expect(html).toContain('data-command="workflow.generatePlan"');
+    expect(html).toContain('View Repair Plan');
     expect(html).not.toContain('data-command="workflow.goForward"');
     expect(html).not.toContain('data-command="workflow.goBack"');
+    expect(html).not.toContain('data-command="workflow.gotoAiMode"');
+    expect(html).not.toContain('data-command="workflow.gotoProject"');
   });
 
   it('should render no generic footer navigation anywhere', () => {
@@ -694,7 +585,7 @@ describe('contextual navigation has no dead controls', () => {
   it('should offer a contextual continue on AI Mode', () => {
     const state = new ExtensionState();
     state.bindWorkspace('C:\\ws');
-    // ai-mode Continue uses goForward while no results exist: honored.
+    // ai-mode Continue moves explicitly to Project while no results exist.
     const model = buildWorkflowModel(state, {
       hasWorkspace: true,
       workspaceName: 'ws',
@@ -704,6 +595,7 @@ describe('contextual navigation has no dead controls', () => {
     expect(model.currentStep).toBe('ai-mode');
     const html = renderWorkflowHtml(model);
     expect(html).toContain('Continue to Project');
+    expect(html).toContain('data-command="workflow.gotoProject"');
   });
 
   it('should land on Status (not Success) when analysis found no blocking issues', () => {
@@ -716,16 +608,22 @@ describe('contextual navigation has no dead controls', () => {
       workspaceRoot: 'C:\\ws',
       requestedStep: 'analyze',
     });
-    // Success is reserved for a completed workflow; a healthy scan shows the
-    // healthy Status screen with Re-check/Test/Smoke actions instead.
+    // Done is reserved for a finished workflow; a healthy scan shows the
+    // healthy Status screen with a single Verify Project action instead.
     expect(model.currentStep).toBe('status');
     const html = renderWorkflowHtml(model);
-    expect(html).toContain('Project looks healthy');
-    expect(html).toContain('Informational findings: <strong>0</strong>');
+    expect(html).toContain('Healthy');
+    expect(html).toContain('ResolveIt did not find any problems that require repair.');
+    expect(html).toContain('Requirements: <strong>0</strong>');
+    expect(html).toContain('Installed dependencies: <strong>0</strong>');
+    expect(html).toContain('Dependencies to install: <strong>0</strong>');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).not.toContain('blocking diagnostic');
     expect(html).toContain('data-command="workflow.verify"');
-    expect(html).toContain('Re-check Project');
-    expect(html).toContain('data-command="workflow.testProject"');
-    expect(html).toContain('data-command="workflow.smokeTest"');
+    expect(html).toContain('Verify Project');
+    expect(html).not.toContain('data-command="workflow.testProject"');
+    expect(html).not.toContain('data-command="workflow.smokeTest"');
   });
 
   it('should not offer Analyze without a workspace', () => {
@@ -743,8 +641,8 @@ describe('contextual navigation has no dead controls', () => {
   });
 });
 
-describe('baseline re-check never manufactures success', () => {
-  it('should stay on Status after a clean re-check of an untouched project', async () => {
+describe('healthy projects reach Verify and Done without launching anything', () => {
+  it('should reach Verify after a clean check of an untouched project', async () => {
     const h = harness({
       verify: async () => ({ resolved: [], remaining: [], current: [] as never[] }),
     });
@@ -757,10 +655,33 @@ describe('baseline re-check never manufactures success', () => {
       workspaceName: 'ws',
       workspaceRoot: 'C:\\ws',
     });
-    expect(model.currentStep).toBe('status');
+    expect(model.currentStep).toBe('verify');
     const html = renderWorkflowHtml(model);
+    expect(html).toContain('Verify Changes');
+    expect(html).toContain('data-command="workflow.finish"');
+  });
+
+  it('should reach Done after finishing a clean check, with no dev/start requirement', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: [], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    h.state.markScanned();
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.verify']?.();
+    await h.handlers['workflow.finish']?.();
+    const model = buildWorkflowModel(h.state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+    });
+    expect(model.currentStep).toBe('success');
+    const html = renderWorkflowHtml(model);
+    expect(html).toContain('Done');
     expect(html).toContain('Project looks healthy');
-    expect(html).not.toContain('Project Resolved');
+    expect(html).not.toContain('Smoke');
+    expect(html).not.toContain('Test Project');
+    expect(html).not.toContain('Not responding');
   });
 
   it('should land on the failed screen when standalone verification finds blocking issues', async () => {
@@ -781,163 +702,8 @@ describe('baseline re-check never manufactures success', () => {
   });
 });
 
-describe('smoke test handler', () => {
-  function scannedState(): ExtensionState {
-    const state = new ExtensionState();
-    state.bindWorkspace('C:\\ws');
-    state.markScanned();
-    state.setDiagnostics([]);
-    return state;
-  }
-
-  function modelOf(state: ExtensionState) {
-    return buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' });
-  }
-
-  it('should record a passing smoke run with its URL', async () => {
-    const h = harness();
-    h.state.bindWorkspace('C:\\ws');
-    h.state.markScanned();
-    await h.handlers['workflow.smokeTest']?.();
-    const smoke = h.state.getProjectSmoke();
-    expect(smoke?.success).toBe(true);
-    expect(smoke?.url).toBe('http://localhost:3000/');
-    expect(modelOf(h.state).currentStep).toBe('status');
-    expect(renderWorkflowHtml(modelOf(h.state))).toContain('http://localhost:3000/');
-  });
-
-  it('should report a failed smoke run without touching the test state', async () => {
-    const h = harness({
-      smokeProject: async () => ({
-        attempted: true,
-        command: { label: 'npm run dev' },
-        started: true,
-        listening: false,
-        responded: false,
-        success: false,
-        timedOut: true,
-        output: '',
-        message: 'Application did not become reachable on localhost within 60s.',
-      }),
-    });
-    h.state.bindWorkspace('C:\\ws');
-    h.state.markScanned();
-    await h.handlers['workflow.smokeTest']?.();
-    expect(h.state.getProjectSmoke()?.success).toBe(false);
-    expect(h.state.getProjectTest()).toBeUndefined();
-    expect(modelOf(h.state).currentStep).toBe('failed');
-    const html = renderWorkflowHtml(modelOf(h.state));
-    expect(html).toContain('Smoke test failure');
-    expect(html).toContain('did not become reachable');
-  });
-
-  it('should say plainly when no run command exists', async () => {
-    const h = harness({
-      smokeProject: async () => ({
-        attempted: false,
-        started: false,
-        listening: false,
-        responded: false,
-        success: false,
-        timedOut: false,
-        output: '',
-        message: 'No safe run command was detected.',
-      }),
-    });
-    h.state.bindWorkspace('C:\\ws');
-    await h.handlers['workflow.smokeTest']?.();
-    expect(h.warnings.join(' ')).toContain('No safe run command');
-  });
-
-  it('should reject a second run while one is already running', async () => {
-    let release!: () => void;
-    const gate = new Promise<unknown>((resolve) => {
-      release = () => resolve({ attempted: true, success: true });
-    });
-    const h = harness({ smokeProject: () => gate as Promise<unknown> });
-    h.state.bindWorkspace('C:\\ws');
-    const first = h.handlers['workflow.smokeTest']?.();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await h.handlers['workflow.smokeTest']?.();
-    expect(h.info.join(' ')).toContain('already running');
-    release();
-    await first;
-  });
-
-  it('should cancel an in-flight run when requested', async () => {
-    let trigger!: () => void;
-    const h = harness({
-      tokenTap: (fire) => {
-        trigger = fire;
-      },
-      smokeProject: (_root: string, _opts?: unknown) =>
-        new Promise((resolve) => {
-          const timer = setInterval(() => {
-            const opts = _opts as { signal?: { aborted: boolean } } | undefined;
-            if (opts?.signal?.aborted === true) {
-              clearInterval(timer);
-              resolve({
-                attempted: true,
-                started: false,
-                listening: false,
-                responded: false,
-                success: false,
-                timedOut: false,
-                cancelled: true,
-                output: '',
-                error: 'operation cancelled',
-                message: 'Smoke test was cancelled before it finished.',
-              });
-            }
-          }, 20);
-        }),
-    });
-    h.state.bindWorkspace('C:\\ws');
-    const pending = h.handlers['workflow.smokeTest']?.();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    trigger();
-    await pending;
-    const smoke = h.state.getProjectSmoke();
-    expect(smoke?.running).toBe(false);
-    expect(smoke?.success).toBe(false);
-    expect(h.info.join(' ')).toContain('cancelled');
-  });
-});
-
-describe('test handler concurrency and cancellation', () => {
-  it('should reject a second test run while one is already running', async () => {
-    let release!: () => void;
-    const gate = new Promise<unknown>((resolve) => {
-      release = () => resolve({ attempted: true, success: true, exitCode: 0, stdout: '', stderr: '', message: 'ok' });
-    });
-    const h = harness({ testProject: () => gate as Promise<unknown> });
-    h.state.bindWorkspace('C:\\ws');
-    const first = h.handlers['workflow.testProject']?.();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await h.handlers['workflow.testProject']?.();
-    expect(h.info.join(' ')).toContain('already running');
-    release();
-    await first;
-  });
-
-  it('should not run test and smoke concurrently', async () => {
-    let release!: () => void;
-    const gate = new Promise<unknown>((resolve) => {
-      release = () => resolve({ attempted: true, success: true, exitCode: 0, stdout: '', stderr: '', message: 'ok' });
-    });
-    const h = harness({ testProject: () => gate as Promise<unknown> });
-    h.state.bindWorkspace('C:\\ws');
-    const first = h.handlers['workflow.testProject']?.();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await h.handlers['workflow.smokeTest']?.();
-    expect(h.info.join(' ')).toContain('already running');
-    release();
-    await first;
-  });
-});
-
 describe('start over genuinely resets the workflow', () => {
-  it('should clear plan, approvals, execution, verification, test, and errors', async () => {
+  it('should clear plan, approvals, execution, verification, completion, and errors', async () => {
     const h = harness();
     h.state.bindWorkspace('C:\\ws');
     h.state.markScanned();
@@ -954,8 +720,7 @@ describe('start over genuinely resets the workflow', () => {
     expect(h.state.getApprovedIds()).toEqual([]);
     expect(h.state.getExecution()).toBeUndefined();
     expect(h.state.getLastVerification()).toBeUndefined();
-    expect(h.state.getProjectTest()).toBeUndefined();
-    expect(h.state.getProjectSmoke()).toBeUndefined();
+    expect(h.state.isWorkflowCompleted()).toBe(false);
     expect(h.state.getLastError()).toBeUndefined();
     expect(h.state.getHasScanned()).toBe(false);
     expect(h.state.getDiagnostics()).toEqual([]);
@@ -1020,7 +785,7 @@ describe('approval decisions survive re-planning by fingerprint', () => {
 });
 
 describe('failure reporting lists every category', () => {
-  it('should show execution, verification, test, and smoke failures together', () => {
+  it('should show execution and verification failures together', () => {
     const state = new ExtensionState();
     state.bindWorkspace('C:\\ws');
     state.markScanned();
@@ -1033,39 +798,19 @@ describe('failure reporting lists every category', () => {
     });
     state.setLastVerification({ resolved: [], remaining: ['k1'], timestamp: new Date() });
     state.setLastError('ResolveIt could not complete the repair.');
-    state.setProjectTest({
-      running: false,
-      commandLabel: 'npm test',
-      attempted: true,
-      success: false,
-      exitCode: 1,
-      output: '',
-      message: 'Project test failed with exit code 1.',
-    });
-    state.setProjectSmoke({
-      running: false,
-      commandLabel: 'npm run dev',
-      attempted: true,
-      started: true,
-      listening: false,
-      responded: false,
-      success: false,
-      output: '',
-      message: 'Application did not become reachable on localhost within 60s.',
-    });
     const model = buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' });
     expect(model.currentStep).toBe('failed');
-    expect(model.failures.map((failure) => failure.kind)).toEqual(['execution', 'verification', 'test', 'smoke']);
+    expect(model.failures.map((failure) => failure.kind)).toEqual(['execution', 'verification']);
     const html = renderWorkflowHtml(model);
     expect(html).toContain('Execution failure');
     expect(html).toContain('Verification failure');
-    expect(html).toContain('Project test failure');
-    expect(html).toContain('Smoke test failure');
     expect(html).toContain('npm exploded');
+    expect(html).not.toContain('Smoke');
+    expect(html).not.toContain('Test Project');
   });
 });
 
-describe('status counts separate findings from issues', () => {
+describe('status keeps internal counts while showing dependency facts', () => {
   it('should not present informational notes as problems', () => {
     const state = new ExtensionState();
     state.bindWorkspace('C:\\ws');
@@ -1108,9 +853,12 @@ describe('status counts separate findings from issues', () => {
       blockingIssues: 1,
     });
     const html = renderWorkflowHtml(model);
-    expect(html).toContain('Informational findings: <strong>2</strong>');
-    expect(html).toContain('Issues: <strong>2</strong>');
-    expect(html).toContain('Blocking issues: <strong>1</strong>');
+    expect(html).toContain('Requirements: <strong>2</strong>');
+    expect(html).toContain('Installed dependencies: <strong>2</strong>');
+    expect(html).toContain('Dependencies to install: <strong>0</strong>');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).not.toContain('Issues: <strong>');
     expect(html).not.toContain('Issues found:');
   });
 });
@@ -1146,20 +894,15 @@ describe('every rendered workflow state is reachable', () => {  function base():
     });
     expect(buildWorkflowModel(state, input).currentStep).toBe('apply');
 
+    // A clean check lands on Verify; finishing it reaches Done. No test or
+    // app-launch step is required in between.
     state.setLastVerification({ resolved: ['k'], remaining: [], timestamp: new Date() });
     expect(buildWorkflowModel(state, input).currentStep).toBe('verify');
 
-    state.setProjectTest({
-      running: false,
-      commandLabel: 'npm test',
-      attempted: true,
-      success: true,
-      exitCode: 0,
-      output: '',
-      message: 'Project test passed.',
-    });
+    state.markWorkflowCompleted();
     expect(buildWorkflowModel(state, input).currentStep).toBe('success');
 
+    state.clearWorkflowCompleted();
     state.setLastVerification({ resolved: [], remaining: ['k'], timestamp: new Date() });
     expect(buildWorkflowModel(state, input).currentStep).toBe('failed');
   });
@@ -1171,10 +914,10 @@ describe('every rendered workflow state is reachable', () => {  function base():
     const markers: Record<string, string> = {
       status: 'Project Status',
       'repair-plan': 'Repair Plan',
-      apply: 'Applying Changes',
-      verify: 'Verification',
-      success: 'Project Resolved',
-      failed: 'could not fully resolve',
+      apply: 'Applying Fixes',
+      verify: 'Verify Changes',
+      success: 'Final check passed',
+      failed: 'Problems Remain',
     };
     state.setRepairPlan(makePlan(1));
     state.setApproval('a1', true);
@@ -1188,13 +931,17 @@ describe('every rendered workflow state is reachable', () => {  function base():
     const html = renderWorkflowHtml(buildWorkflowModel(state, input));
     expect(html).toContain(markers.verify);
     expect(html).not.toContain('data-command="workflow.goForward"');
+    state.markWorkflowCompleted();
+    const doneHtml = renderWorkflowHtml(buildWorkflowModel(state, input));
+    expect(doneHtml).toContain(markers.success);
+    expect(doneHtml).toContain('Start Over');
   });
 });
 
 describe('full workflow reaches success honestly', () => {
-  it('should go apply to verify to test to success with evidence', async () => {
+  it('should go status to plan to apply to verify to done with evidence', async () => {
     const executed: string[][] = [];
-    const core = {
+    const h = harness({
       executeApproved: async (_root: string, _plan: RepairPlan, approved: string[]) => {
         executed.push([...approved]);
         return {
@@ -1202,33 +949,16 @@ describe('full workflow reaches success honestly', () => {
           success: true,
         };
       },
-      verifyAgainstPrevious: async () => ({ resolved: ['k1'], remaining: [], current: [] as never[] }),
-      planRepairsSmart: async () => ({
-        plan: makePlan(2),
-        diagnostics: [],
-        aiUsed: false,
-        aiRejections: [],
-        manualActions: [],
-      }),
-      testProject: async () => ({
-        attempted: true,
-        success: true,
-        exitCode: 0,
-        stdout: 'ok',
-        stderr: '',
-        command: { label: 'npm test' },
-        message: 'Project test passed.',
-      }),
-    };
-    const h = harness({});
-    (h.core as Record<string, unknown>).executeApproved = core.executeApproved;
-    (h.core as Record<string, unknown>).verifyAgainstPrevious = core.verifyAgainstPrevious;
-    (h.core as Record<string, unknown>).testProject = core.testProject;
+      verify: async () => ({ resolved: ['k1'], remaining: [], current: [] as never[] }),
+    });
     h.state.bindWorkspace('C:\\ws');
     h.state.markScanned();
     h.state.setDiagnostics([]);
 
     await h.handlers['workflow.generatePlan']?.();
+    expect(
+      buildWorkflowModel(h.state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' }).currentStep
+    ).toBe('repair-plan');
     await h.handlers['workflow.approveAll']?.();
     await h.handlers['workflow.apply']?.();
 
@@ -1237,9 +967,9 @@ describe('full workflow reaches success honestly', () => {
       workspaceName: 'ws',
       workspaceRoot: 'C:\\ws',
     });
-    expect(['verify', 'success']).toContain(modelAfterApply.currentStep);
+    expect(modelAfterApply.currentStep).toBe('verify');
 
-    await h.handlers['workflow.testProject']?.();
+    await h.handlers['workflow.finish']?.();
     const model = buildWorkflowModel(h.state, {
       hasWorkspace: true,
       workspaceName: 'ws',
@@ -1247,10 +977,29 @@ describe('full workflow reaches success honestly', () => {
     });
     expect(model.currentStep).toBe('success');
     const html = renderWorkflowHtml(model);
-    expect(html).toContain('Project Resolved');
-    expect(html).toContain('Repairs applied:');
-    expect(html).toContain('Verification passed:');
-    expect(html).toContain('Project test passed');
+    expect(html).toContain('Done');
+    expect(html).toContain('Fixes applied:');
+    expect(html).toContain('Final check passed:');
+    expect(html).not.toContain('Smoke');
+  });
+
+  it('should loop back to the plan when the final check still finds problems', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: ['k1'], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    h.state.markScanned();
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.generatePlan']?.();
+    await h.handlers['workflow.approveAll']?.();
+    await h.handlers['workflow.apply']?.();
+    expect(
+      buildWorkflowModel(h.state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' }).currentStep
+    ).toBe('failed');
+    await h.handlers['workflow.returnToPlan']?.();
+    expect(
+      buildWorkflowModel(h.state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' }).currentStep
+    ).toBe('repair-plan');
   });
 
   it('should never execute a denied action', async () => {
@@ -1292,5 +1041,395 @@ describe('full workflow reaches success honestly', () => {
     const html = renderWorkflowHtml(model);
     expect(html).toContain('Failed');
     expect(html).not.toContain('>Approved<');
+  });
+});
+
+describe('simplified beginner workflow regressions', () => {
+  function scannedHealthy(): ExtensionState {
+    const state = new ExtensionState();
+    state.bindWorkspace('C:\\ws');
+    state.markScanned();
+    state.setDiagnostics([]);
+    return state;
+  }
+
+  function scannedUnhealthy(): ExtensionState {
+    const state = scannedHealthy();
+    state.setDiagnostics([
+      {
+        id: 'd1',
+        severity: 'error',
+        category: 'dependency',
+        code: 'X',
+        title: 't',
+        message: 'm',
+        evidence: [],
+        source: 'dependency-resolver',
+        timestamp: new Date(),
+        metadata: {},
+      } as never,
+    ]);
+    return state;
+  }
+
+  function htmlOf(state: ExtensionState): string {
+    return renderWorkflowHtml(
+      buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' })
+    );
+  }
+
+  it('should expose no smoke or test-project concepts on the Status screen', () => {
+    for (const state of [scannedHealthy(), scannedUnhealthy()]) {
+      const html = htmlOf(state);
+      expect(html).not.toContain('Test Project');
+      expect(html).not.toContain('Smoke Test');
+      expect(html).not.toContain('Smoke test');
+      expect(html).not.toContain('Run / Smoke');
+      expect(html).not.toContain('Not responding');
+      expect(html).not.toContain('dev/start');
+      expect(html).not.toContain('start script');
+      expect(html).not.toContain('localhost');
+      expect(html).not.toContain('workflow.testProject');
+      expect(html).not.toContain('workflow.smokeTest');
+    }
+  });
+
+  it('should expose no smoke or test-project concepts on any screen', () => {
+    const state = scannedUnhealthy();
+    state.setRepairPlan(makePlan(1));
+    state.setApproval('a1', true);
+    state.setExecution({
+      results: [{ action: makeAction('a1'), result: { success: true } }],
+      success: true,
+      timestamp: new Date(),
+    });
+    state.setLastVerification({ resolved: ['k'], remaining: [], timestamp: new Date() });
+    expect(htmlOf(state)).toContain('Verify Changes');
+    state.markWorkflowCompleted();
+    const done = htmlOf(state);
+    expect(done).toContain('Done');
+    expect(done).not.toContain('Smoke');
+    expect(done).not.toContain('Test Project');
+    state.clearWorkflowCompleted();
+    state.setLastVerification({ resolved: [], remaining: ['k'], timestamp: new Date() });
+    const failed = htmlOf(state);
+    expect(failed).toContain('Problems Remain');
+    expect(failed).not.toContain('Smoke');
+    expect(failed).not.toContain('Test Project');
+  });
+
+  it('should send unhealthy projects to the repair plan with one primary action', () => {
+    const html = htmlOf(scannedUnhealthy());
+    expect(html).toContain('Problems Found');
+    expect(html).toContain('View Repair Plan');
+    expect(html).toContain('data-command="workflow.generatePlan"');
+  });
+
+  it('should send healthy projects to Verify with one primary action', () => {
+    const html = htmlOf(scannedHealthy());
+    expect(html).toContain('Healthy');
+    expect(html).toContain('Verify Project');
+    expect(html).toContain('data-command="workflow.verify"');
+  });
+
+  it('should finish without any dev/start project setup', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: [], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    h.state.markScanned();
+    // A bare manifest with no dev/start/test scripts at all.
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.verify']?.();
+    await h.handlers['workflow.finish']?.();
+    const model = buildWorkflowModel(h.state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+    });
+    expect(model.currentStep).toBe('success');
+  });
+
+  it('should refuse to finish while problems remain', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: ['k1'], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    h.state.markScanned();
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.verify']?.();
+    await h.handlers['workflow.finish']?.();
+    expect(h.state.isWorkflowCompleted()).toBe(false);
+    expect(
+      buildWorkflowModel(h.state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' }).currentStep
+    ).toBe('failed');
+  });
+
+  it('should reset Done back to AI Mode on Start Over', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: [], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    h.state.markScanned();
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.verify']?.();
+    await h.handlers['workflow.finish']?.();
+    await h.handlers['workflow.restart']?.();
+    const model = buildWorkflowModel(h.state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+      requestedStep: 'ai-mode',
+    });
+    expect(model.currentStep).toBe('ai-mode');
+  });
+
+  it('should give every visible primary button a working handler', async () => {
+    const h = harness({
+      verify: async () => ({ resolved: [], remaining: [], current: [] as never[] }),
+    });
+    h.state.bindWorkspace('C:\\ws');
+    const seen = new Set<string>();
+    const collect = (html: string): void => {
+      for (const match of html.matchAll(/data-command="(workflow\.[a-zA-Z]+)"/g)) {
+        seen.add(match[1] as string);
+      }
+    };
+    // Walk every reachable screen and collect its buttons.
+    collect(htmlOf(scannedHealthy()));
+    collect(htmlOf(scannedUnhealthy()));
+    h.state.markScanned();
+    h.state.setDiagnostics([]);
+    await h.handlers['workflow.verify']?.();
+    collect(htmlOf(h.state));
+    await h.handlers['workflow.finish']?.();
+    collect(htmlOf(h.state));
+    h.state.clearWorkflowCompleted();
+    h.state.setLastVerification({ resolved: [], remaining: ['k'], timestamp: new Date() });
+    collect(htmlOf(h.state));
+    // AI Mode / Project / Analyze / Repair Plan / Apply screens.
+    const fresh = new ExtensionState();
+    fresh.bindWorkspace('C:\\ws');
+    collect(
+      renderWorkflowHtml(
+        buildWorkflowModel(fresh, {
+          hasWorkspace: true,
+          workspaceName: 'ws',
+          workspaceRoot: 'C:\\ws',
+          requestedStep: 'ai-mode',
+        })
+      )
+    );
+    collect(
+      renderWorkflowHtml(
+        buildWorkflowModel(fresh, {
+          hasWorkspace: true,
+          workspaceName: 'ws',
+          workspaceRoot: 'C:\\ws',
+          requestedStep: 'project',
+        })
+      )
+    );
+    collect(
+      renderWorkflowHtml(
+        buildWorkflowModel(fresh, {
+          hasWorkspace: true,
+          workspaceName: 'ws',
+          workspaceRoot: 'C:\\ws',
+          requestedStep: 'analyze',
+        })
+      )
+    );
+    const planned = scannedUnhealthy();
+    planned.setRepairPlan(makePlan(1));
+    collect(htmlOf(planned));
+    for (const command of seen) {
+      // Contextual AI Mode/Project moves are view-level navigation with
+      // explicit targets; everything else needs a command handler.
+      const handled =
+        h.handlers[command] !== undefined ||
+        command === 'workflow.gotoAiMode' ||
+        command === 'workflow.gotoProject';
+      expect(handled, `button ${command} must have a working handler`).toBe(true);
+    }
+    expect(seen.size).toBeGreaterThan(0);
+  });
+
+  it('should register no obsolete workflow commands', () => {
+    for (const obsolete of ['workflow.testProject', 'workflow.smokeTest', 'workflow.goBack', 'workflow.goForward']) {
+      expect(WORKFLOW_ALLOWED_COMMANDS.has(obsolete)).toBe(false);
+    }
+    const h = harness();
+    for (const obsolete of ['workflow.testProject', 'workflow.smokeTest', 'workflow.goBack', 'workflow.goForward']) {
+      expect(h.handlers[obsolete]).toBeUndefined();
+    }
+  });
+});
+
+describe('status distinguishes declared, satisfied, missing, and mismatched dependencies', () => {
+  function expressRequirement(): never {
+    return {
+      id: 'r1',
+      ecosystem: 'node',
+      type: 'package-dependency',
+      name: 'express',
+      versionConstraint: '^5.1.0',
+      sourceFile: 'package.json',
+      sourceSection: 'dependencies.production',
+      optional: false,
+      metadata: { scope: 'production' },
+    } as never;
+  }
+
+  function expressDiagnostic(code: 'DEPENDENCY_PACKAGE_MISSING' | 'DEPENDENCY_PACKAGE_VERSION_MISMATCH'): never {
+    return {
+      id: 'd1',
+      severity: 'error',
+      category: 'dependency',
+      code,
+      title: 'Dependency: express',
+      message: code === 'DEPENDENCY_PACKAGE_MISSING' ? 'not currently installed' : 'installed version is 4.21.2',
+      evidence: [],
+      source: 'dependency-resolver',
+      timestamp: new Date(),
+      metadata: {},
+      requirement: expressRequirement(),
+    } as never;
+  }
+
+  function stateWith(requirements: never[], diagnostics: never[]): ExtensionState {
+    const state = new ExtensionState();
+    state.bindWorkspace('C:\\ws');
+    state.markScanned();
+    state.setRequirements([
+      { projectId: 'p', sourceFiles: ['package.json'], requirements, parseErrors: [] } as never,
+    ]);
+    state.setDiagnostics(diagnostics);
+    return state;
+  }
+
+  function statusHtml(state: ExtensionState): string {
+    return renderWorkflowHtml(
+      buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' })
+    );
+  }
+
+  it('should report a missing dependency as Problems Found, never Healthy', () => {
+    const state = stateWith([expressRequirement()], [expressDiagnostic('DEPENDENCY_PACKAGE_MISSING')]);
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+    });
+    expect(model.currentStep).toBe('status');
+    expect(model.statusSummary.dependencies).toMatchObject({
+      required: 1,
+      satisfied: 0,
+      missing: 1,
+      mismatched: 0,
+    });
+    const html = statusHtml(state);
+    expect(html).toContain('Problems Found');
+    expect(html).not.toContain('Healthy');
+    expect(html).toContain('Requirements: <strong>1</strong>');
+    expect(html).toContain('Installed dependencies: <strong>0</strong>');
+    expect(html).toContain('Dependencies to install: <strong>1</strong>');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).not.toContain('blocking diagnostic');
+    expect(html).toContain('Missing dependency');
+    expect(html).toContain('express ^5.1.0');
+    expect(html).toContain('but it is not currently installed');
+    expect(html).toContain('View Repair Plan');
+  });
+
+  it('should report a version mismatch as a problem with the installed version named', () => {
+    const state = stateWith([expressRequirement()], [expressDiagnostic('DEPENDENCY_PACKAGE_VERSION_MISMATCH')]);
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+    });
+    expect(model.statusSummary.dependencies).toMatchObject({
+      required: 1,
+      satisfied: 0,
+      missing: 0,
+      mismatched: 1,
+    });
+    const html = statusHtml(state);
+    expect(html).toContain('Problems Found');
+    expect(html).toContain('Requirements: <strong>1</strong>');
+    expect(html).toContain('Installed dependencies: <strong>0</strong>');
+    expect(html).toContain('Dependencies to install: <strong>1</strong>');
+    expect(html).toContain('Mismatched dependency');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).toContain('View Repair Plan');
+  });
+
+  it('should say plainly when every required dependency is satisfied', () => {
+    const state = stateWith([expressRequirement()], []);
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: 'C:\\ws',
+    });
+    expect(model.statusSummary.dependencies).toMatchObject({
+      required: 1,
+      satisfied: 1,
+      missing: 0,
+      mismatched: 0,
+    });
+    const html = statusHtml(state);
+    expect(html).toContain('Healthy');
+    expect(html).toContain('Requirements: <strong>1</strong>');
+    expect(html).toContain('Installed dependencies: <strong>1</strong>');
+    expect(html).toContain('Dependencies to install: <strong>0</strong>');
+    expect(html).not.toContain('Informational findings');
+    expect(html).not.toContain('Blocking issues');
+    expect(html).not.toContain('Issues: <strong>');
+    expect(html).toContain('All required dependencies are already installed. No changes are needed.');
+    expect(html).toContain('Verify Project');
+  });
+
+  it('should show the workspace folder name when no formal project name exists', () => {
+    const state = new ExtensionState();
+    state.bindWorkspace('C:\\ResolveIt-Test-Missing');
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ResolveIt-Test-Missing',
+      workspaceRoot: 'C:\\ResolveIt-Test-Missing',
+      requestedStep: 'project',
+    });
+    expect(model.currentStep).toBe('project');
+    expect(model.projectName).toBe('ResolveIt-Test-Missing');
+    const html = renderWorkflowHtml(model);
+    expect(html).not.toContain('(no project detected)');
+    expect(html).toContain('ResolveIt-Test-Missing');
+  });
+
+  it('should prefer a detected project name over the folder name', () => {
+    const state = new ExtensionState();
+    state.bindWorkspace('C:\\ResolveIt-Test-Missing');
+    state.setProjectName('resolveit-test-missing');
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ResolveIt-Test-Missing',
+      workspaceRoot: 'C:\\ResolveIt-Test-Missing',
+      requestedStep: 'project',
+    });
+    expect(model.projectName).toBe('resolveit-test-missing');
+  });
+
+  it('should fall back to a placeholder only with no folder and no name', () => {
+    const state = new ExtensionState();
+    state.bindWorkspace(undefined);
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: false,
+      workspaceName: 'No folder open',
+      workspaceRoot: '',
+      requestedStep: 'project',
+    });
+    expect(model.projectName).toBe('(no project detected)');
   });
 });

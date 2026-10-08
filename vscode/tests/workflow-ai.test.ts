@@ -299,6 +299,11 @@ describe('workflow message validation', () => {
       'workbench.action.openSettings',
       'vscode.open',
       'workflow.destroyEverything',
+      // Removed from the simplified workflow: must never route again.
+      'workflow.testProject',
+      'workflow.smokeTest',
+      'workflow.goBack',
+      'workflow.goForward',
     ]) {
       expect(
         validateWorkflowMessage({ type: 'command', command }),
@@ -334,33 +339,25 @@ describe('success and failure screens carry evidence', () => {
       timestamp: new Date(),
     });
     state.setLastVerification({ resolved: ['k1'], remaining: [], timestamp: new Date() });
-    state.setProjectTest({
-      running: false,
-      commandLabel: 'npm test',
-      attempted: true,
-      success: true,
-      exitCode: 0,
-      output: 'ok',
-      message: 'Project test succeeded.',
-    });
+    state.markWorkflowCompleted();
     return state;
   }
 
-  it('should show repairs, verification, and test evidence on success', () => {
+  it('should show repairs and verification evidence on success', () => {
     const html = renderWorkflowHtml(
       buildWorkflowModel(resolvedState(), { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: '/ws' })
     );
-    expect(html).toContain('Project Resolved');
-    expect(html).toContain('Repairs applied');
-    expect(html).toContain('Verification passed');
-    expect(html).toContain('Project test passed');
-    expect(html).toContain('npm test');
-    expect(html).toContain('data-command="workflow.testProject"');
+    expect(html).toContain('Done');
+    expect(html).toContain('Fixes applied');
+    expect(html).toContain('Final check passed');
     expect(html).toContain('data-command="workflow.restart"');
+    expect(html).not.toContain('data-command="workflow.testProject"');
+    expect(html).not.toContain('data-command="workflow.smokeTest"');
   });
 
-  it('should distinguish execution, verification, and test failures', () => {
+  it('should distinguish execution and verification failures', () => {
     const failedExecution = resolvedState();
+    failedExecution.clearWorkflowCompleted();
     failedExecution.setExecution({
       results: [{ action: makeAction('a1'), result: { success: false, error: 'npm exploded' } as RepairResult }],
       success: false,
@@ -371,7 +368,7 @@ describe('success and failure screens carry evidence', () => {
     const html = renderWorkflowHtml(
       buildWorkflowModel(failedExecution, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: '/ws' })
     );
-    expect(html).toContain('could not fully resolve');
+    expect(html).toContain('Problems Remain');
     expect(html).toContain('npm exploded');
     expect(html).toContain('data-command="workflow.returnToPlan"');
   });

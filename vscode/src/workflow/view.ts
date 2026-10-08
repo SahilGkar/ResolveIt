@@ -6,8 +6,8 @@ import type { CoreClient } from '../core.js';
 import type { AIConfig } from '../../../src/index.js';
 import { configToAIConfigOverrides } from '../mappers.js';
 import { workflowStyles, renderWorkflowHtml, renderWorkflowBootHtml, renderWorkflowErrorHtml } from './render.js';
-import { validateWorkflowMessage, isWorkflowNavigation } from './messages.js';
-import { buildWorkflowModel, adjacentStep, type WorkflowStep } from './model.js';
+import { validateWorkflowMessage, isWorkflowGoto } from './messages.js';
+import { buildWorkflowModel, type WorkflowStep } from './model.js';
 import { createWorkflowCommandHandlers, type WorkflowCommandContext } from './commands.js';
 
 /** Stages that require workflow results; meaningless as a cursor with fresh state. */
@@ -295,10 +295,11 @@ export class WorkflowProvider {
       return;
     }
 
-    // Panel navigation is view state, so it is handled here rather than in the
-    // shared command handlers.
-    if (isWorkflowNavigation(validated.command)) {
-      this.navigate(validated.command === 'workflow.goBack' ? 'back' : 'forward');
+    // Contextual panel navigation is view state, so it is handled here rather
+    // than in the shared command handlers. There is no generic Back/Next: each
+    // screen offers only the move that makes sense from that stage.
+    if (isWorkflowGoto(validated.command)) {
+      this.goToStep(validated.command === 'workflow.gotoAiMode' ? 'ai-mode' : 'project');
       return;
     }
 
@@ -349,33 +350,18 @@ export class WorkflowProvider {
     }
   }
 
-  /** Move the panel to an explicit stage requested by the user. */
-  navigate(direction: 'forward' | 'back'): void {
-    const model = buildWorkflowModel(this.state, {
-      hasWorkspace: this.getWorkspaceRoot().length > 0,
-      workspaceName: 'ResolveIt',
-      workspaceRoot: this.getWorkspaceRoot(),
-      requestedStep: this.cursor,
-    });
-    const next = adjacentStep(model.currentStep, direction);
-    if (next) {
-      this.cursor = next;
-      this.logger.info(`Workflow stage: ${model.currentStep} -> ${next}`);
-      this.postState();
-    }
-  }
-
   /** Jump to a specific stage (used when the user runs a stage's action). */
   goToStep(step: WorkflowStep): void {
     this.cursor = step;
+    this.logger.info(`Workflow stage: -> ${step}`);
     this.postState();
   }
 
   /**
    * True when no workflow progress exists at all (fresh start or after Start
    * Over). A stale post-analysis cursor is then dropped so the panel genuinely
-   * returns to AI Mode; pre-analysis cursor positions are left alone so manual
-   * Back/Next keeps working before analysis runs.
+   * returns to AI Mode; pre-analysis cursor positions are left alone so the
+   * user can sit on AI Mode or Project before analysis runs.
    */
   private isWorkflowFresh(): boolean {
     return (
@@ -385,8 +371,7 @@ export class WorkflowProvider {
       this.state.getLastVerification() === undefined &&
       this.state.getLastError() === undefined &&
       this.state.getActiveOperation() === undefined &&
-      this.state.getProjectTest() === undefined &&
-      this.state.getProjectSmoke() === undefined
+      !this.state.isWorkflowCompleted()
     );
   }
 

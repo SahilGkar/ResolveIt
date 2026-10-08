@@ -205,6 +205,7 @@ export {
   diagnosticsToJSON,
   createDiagnosticEngine,
   versionMatcher,
+  inspectNpmPackageInstallState,
   runtimeDiagnosticRule,
   toolchainDiagnosticRule,
   containerDiagnosticRule,
@@ -214,6 +215,8 @@ export {
   projectDiagnosticRule,
   crossProjectDiagnosticRule,
   type DiagnoseOptions,
+  type NpmInstallState,
+  type NpmInstallStatus,
 } from './diagnostics/index.js';
 
 export {

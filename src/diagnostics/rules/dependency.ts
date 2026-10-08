@@ -1,15 +1,19 @@
+import { resolve, sep } from 'node:path';
 import type { Diagnostic, DiagnosticRule, DiagnosticContext, DiagnosticSeverity, DiagnosticEvidence, RemediationCandidate, ProjectRequirement } from '../../core/interfaces.js';
+import { inspectNpmPackageInstallState } from '../installed-packages.js';
 
 function createDiagnostic(
   requirement: ProjectRequirement,
   severity: DiagnosticSeverity,
   message: string,
   evidence: DiagnosticEvidence[],
-  remediationCandidates: RemediationCandidate[]
+  remediationCandidates: RemediationCandidate[],
+  code?: string,
+  metadata?: Record<string, unknown>
 ): Diagnostic {
   return {
     id: `diag-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    code: `DEPENDENCY_${requirement.type.toUpperCase()}_MISMATCH`,
+    code: code ?? `DEPENDENCY_${requirement.type.toUpperCase()}_MISMATCH`,
     severity,
     category: 'dependency',
     title: `Dependency: ${requirement.name}`,
@@ -20,8 +24,47 @@ function createDiagnostic(
     remediationCandidates,
     source: 'dependency-resolver',
     timestamp: new Date(),
-    metadata: { ecosystem: requirement.ecosystem, type: requirement.type },
+    metadata: { ecosystem: requirement.ecosystem, type: requirement.type, ...metadata },
   };
+}
+
+/**
+ * Absolute directory holding the manifest a requirement was declared in.
+ * `sourceFile` is workspace-relative, so joining it onto the workspace root
+ * locates the project. The result is contained within the workspace root;
+ * anything else falls back to the root itself rather than escaping.
+ */
+function projectDirOf(workspaceRoot: string, sourceFile: string): string {
+  const root = resolve(workspaceRoot);
+  const slash = sourceFile.lastIndexOf('/');
+  const dir = slash === -1 ? '' : sourceFile.slice(0, slash);
+  const candidate = dir === '' ? root : resolve(root, dir);
+  if (candidate === root || candidate.startsWith(root + sep)) {
+    return candidate;
+  }
+  return root;
+}
+
+/**
+ * Requirements whose installed state this rule establishes deterministically:
+ * direct npm production/development dependencies. Optional and peer
+ * dependencies keep the previous informational behavior (a missing optional
+ * or peer entry is not a repair problem), as do ecosystems without a local
+ * tree inspector.
+ */
+function isInspectedRequirement(requirement: ProjectRequirement): boolean {
+  if (requirement.ecosystem !== 'node') {
+    return false;
+  }
+  if (requirement.optional === true) {
+    return false;
+  }
+  const scope = requirement.metadata?.['scope'];
+  return scope === 'production' || scope === 'development';
+}
+
+function requirementLabel(requirement: ProjectRequirement): string {
+  return `${requirement.name}${requirement.versionConstraint ? ` ${requirement.versionConstraint}` : ''}`;
 }
 
 /**
@@ -121,32 +164,72 @@ export const dependencyDiagnosticRule: DiagnosticRule = {
   category: 'dependency',
   severity: 'warning',
   
-  diagnose(context: DiagnosticContext): Promise<ReadonlyArray<Diagnostic>> {
+  async diagnose(context: DiagnosticContext): Promise<ReadonlyArray<Diagnostic>> {
     const diagnostics: Diagnostic[] = [];
     const depRequirements = context.requirements.flatMap(r =>
       r.requirements.filter(req => req.type === 'package-dependency')
     );
 
-    // Note: Phase 2 environment scanner does not currently maintain a complete
-    // inventory of installed project dependencies. We cannot definitively say
-    // whether a dependency is missing or incompatible.
-    //
-    // This rule will produce "unknown" state diagnostics when it cannot
-    // determine the status of a dependency.
+    // Direct declarations get one diagnostic each when they are a problem, and
+    // none when the installed tree satisfies them. Installed state comes from
+    // the actual project dependency tree (node_modules), never from the
+    // manifest alone, a lockfile alone, or globally installed packages.
 
     // Direct declarations get one diagnostic each: they are actionable.
     for (const req of depRequirements.filter((entry) => !isManagedRequirement(entry))) {
-      // We don't have a complete package inventory from Phase 2
-      // So we emit an informational diagnostic about the unknown state
+      if (!isInspectedRequirement(req)) {
+        // Optional/peer entries and ecosystems without a local tree inspector
+        // keep the previous informational behavior: reported, never blocking.
+        diagnostics.push(createDiagnostic(
+          req,
+          'info',
+          `Dependency ${requirementLabel(req)} declared in ${req.sourceFile} (${req.sourceSection}). Status: unknown - no local package inventory available`,
+          [
+            { source: 'requirement', description: requirementLabel(req), key: req.sourceSection, file: req.sourceFile },
+            { source: 'environment', description: 'No local package inventory available', expected: req.versionConstraint || 'any', actual: 'unknown' },
+          ],
+          createRemediationCandidates(req)
+        ));
+        continue;
+      }
+      const projectDir = projectDirOf(context.workspace.rootPath, req.sourceFile);
+      const state = await inspectNpmPackageInstallState(projectDir, req.name);
+      const checked = state.checkedPath;
+      // A missing development dependency is a real gap but does not stop the
+      // application from running, so it is an issue rather than blocking.
+      const severity: DiagnosticSeverity = req.developmentOnly === true ? 'warning' : 'error';
+      if (state.status === 'missing') {
+        diagnostics.push(createDiagnostic(
+          req,
+          severity,
+          `Project requires ${requirementLabel(req)} (declared in ${req.sourceFile}), but it is not currently installed (checked ${checked}).`,
+          [
+            { source: 'requirement', description: requirementLabel(req), key: req.sourceSection, file: req.sourceFile },
+            { source: 'environment', description: `Checked ${checked}: project-local package not found`, expected: req.versionConstraint || 'any', actual: 'NOT FOUND' },
+          ],
+          createRemediationCandidates(req),
+          'DEPENDENCY_PACKAGE_MISSING',
+          { dependencyStatus: 'missing' }
+        ));
+        continue;
+      }
+      const installed = state.installedVersion as string;
+      if (!req.versionConstraint || context.versionMatcher.matches(req.versionConstraint, installed).satisfied) {
+        // Satisfied: no diagnostic. Silence here is the proof of health that
+        // the workflow counts as "satisfied" — nothing is fabricated.
+        continue;
+      }
       diagnostics.push(createDiagnostic(
         req,
-        'info',
-        `Dependency ${req.name}${req.versionConstraint ? ` ${req.versionConstraint}` : ''} declared in ${req.sourceFile} (${req.sourceSection}). Status: unknown - no local package inventory available`,
+        severity,
+        `Project requires ${requirementLabel(req)}, but the installed version is ${installed} (checked ${checked}).`,
         [
-          { source: 'requirement', description: `${req.name}${req.versionConstraint ? ` ${req.versionConstraint}` : ''}`, key: req.sourceSection, file: req.sourceFile },
-          { source: 'environment', description: 'No local package inventory available', expected: req.versionConstraint || 'any', actual: 'unknown' },
+          { source: 'requirement', description: requirementLabel(req), key: req.sourceSection, file: req.sourceFile },
+          { source: 'environment', description: `Checked ${checked}: installed version does not satisfy the requirement`, expected: req.versionConstraint, actual: installed },
         ],
-        createRemediationCandidates(req)
+        createRemediationCandidates(req),
+        'DEPENDENCY_PACKAGE_VERSION_MISMATCH',
+        { dependencyStatus: 'mismatched', installedVersion: installed }
       ));
     }
 

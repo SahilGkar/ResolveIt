@@ -367,7 +367,8 @@ install-tool range handling, lockfile/transitive filtering).
   handshake, watchdog + Retry error screen), `model.ts` (step resolution,
   mutually exclusive action lifecycles), `render.ts` (step indicator, cards,
   evidence screens), `commands.ts` (AI mode, analyze, plan, approve, apply,
-  verify, test), `messages.ts` (webview message allowlist/validation).
+  verify, finish, return-to-plan, restart), `messages.ts` (webview message
+  allowlist/validation).
 - **Honest approval model**: Approve All / Deny All / individual toggles with a
   live count; bulk approval never escalates system-level actions; denied actions
   are Skipped (filtered from failure reporting in every handler); failed actions
@@ -386,6 +387,10 @@ install-tool range handling, lockfile/transitive filtering).
   (declared, newly bound, then default ports plus an HTTP probe), and always
   terminates the whole process tree. A server that stays alive is smoke success;
   its exit code is never graded as a test result.
+  (Historical note: both capabilities were later removed from the user-facing
+  workflow during the beginner-workflow simplification pass below. The runner
+  in `src/agent/project-test.ts` remains as a Core internal API only; no
+  workflow state, command, or screen depends on it.)
 - **Correctness fixes found by end-to-end runs**: runtime-version diagnostics no
   longer propose uninstallable `install-dependency` actions; the installer
   translates command-line-unsafe version ranges (`^4.0.0`) to bare package
@@ -394,27 +399,44 @@ install-tool range handling, lockfile/transitive filtering).
   planner layers, with regression tests).
 - **Workflow correction pass**: generic footer Back/Next removed in favor of
   contextual actions (footer buttons could not transition post-analysis
-  stages); a baseline re-check stays on Status and never manufactures Success
-  (which requires applied changes, clean verification, and a passed test or
-  smoke check); the reachable Verify stage offers Test and Smoke explicitly;
-  Status counts split into Requirements / Informational findings / Issues
-  (warning+) / Blocking; lockfile entries aggregate into one inventory
-  diagnostic per file with per-package evidence; AI option badges reflect
-  probed reachability only; Start Over performs an explicit reset to AI Mode;
-  return-to-plan carries decisions forward by stable action fingerprint;
-  failure screen lists every applicable category; legacy `repair`/`run` and
-  panel-internal approval commands are hidden from Command Palette discovery.
+  stages); lockfile entries aggregate into one inventory diagnostic per file
+  with per-package evidence; AI option badges reflect probed reachability
+  only; Start Over performs an explicit reset to AI Mode; return-to-plan
+  carries decisions forward by stable action fingerprint. (Historical note:
+  this pass also stated that a baseline re-check stays on Status, that
+  Success requires a passed test or smoke check, that Verify offers Test and
+  Smoke, and that Status shows Requirements / Informational findings /
+  Issues / Blocking counts. All four statements were superseded by the
+  beginner-workflow simplification pass below: a clean check now lands on
+  Verify, Finish reaches Done, and Status shows Requirements / Installed
+  dependencies / Dependencies to install with no test/smoke concepts.)
+- **Beginner-workflow simplification pass**: Test Project and Run / Smoke Test
+  were removed from the user-facing workflow (Status, Verify, Done, and
+  failure screens show no test/smoke concepts; application startup never gates
+  a transition). The state machine is now AI Mode → Project → Analyze →
+  Status → Repair Plan → Apply → Verify → Done, with no generic Back/Next:
+  each screen offers one primary contextual action (healthy Status → Verify
+  Project; unhealthy Status → View Repair Plan; Verify → Finish). A clean
+  check reaches Verify and Finish reaches Done; a failing check derives the
+  failure screen ("Problems Remain"), which loops back via Return to Repair
+  Plan. The Core runner in `src/agent/project-test.ts` remains as an
+  internal API only. A later Status cleanup replaced the diagnostic counters
+  on the Status screen with Requirements / Installed dependencies /
+  Dependencies to install (internal severities and audit data unchanged),
+  and the Project screen falls back to the workspace folder name when no
+  formal project name was detected. Legacy `repair`/`run` and panel-internal
+  approval commands are hidden from Command Palette discovery.
 
-### Validation performed (Phase 15 + corrections)
+### Validation performed (Phase 15 + corrections, updated at handoff)
 
-- Core: 30 files, 488 tests, all passing; typecheck, lint, build pass.
-- Extension: 9 files, 169 tests, all passing; typecheck, lint, build,
+- Core: 31 files, 501 tests, all passing; typecheck, lint, build pass.
+- Extension: 9 files, 175 tests, all passing; typecheck, lint, build,
   `validate-package`, `vsce package` pass.
 - Headless end-to-end runs of the real built bundle against real fixture
   projects through the panel message protocol: full success path (analyze →
-  plan → approve → real `npm install` → verify → real `npm test` → Success
-  screen) and full failure path (unexecutable action → honest failure screen →
-  Return to Repair Plan with the reason preserved).
+  plan → approve → real `npm install` → verify → Done screen) and full
+  failure path (unexecutable action → honest failure screen → Return to
+  Repair Plan with the reason preserved).
 - Live AI run against a local Ollama model: invalid proposals rejected by Core
   validation with reasons, deterministic fallback engaged and reported.
 - VSIX installed into a real VS Code instance: activation verified in the
@@ -653,9 +675,11 @@ ResolveIt Core (`src/index.ts`)
   Verification · Agent · AI Providers
 ```
 
-- **Manifest** (`vscode/package.json`): 7 commands (`resolveit.scan`, `resolveit.diagnose`,
-  `resolveit.run`, `resolveit.environment`, `resolveit.requirements`, `resolveit.repair`,
-  `resolveit.verify`), 4 Explorer views (project, diagnostics, environment, requirements),
+- **Manifest** (`vscode/package.json`): 19 commands (scan, diagnose, run,
+  environment, requirements, repair, verify, analyzeProject,
+  generateRepairPlan, applyApprovedRepairs, approveAction, skipAction,
+  reviewProblems, reviewRepairs, askAI, retryAI, showDetails, openSettings,
+  openWorkflow), no sidebar views (superseded tree views were removed),
   settings (`resolveit.ai.provider|model|baseUrl|timeout`, `resolveit.maxIterations`),
   activation on commands or common manifests. No marketplace publication.
 - **Core integration** (`vscode/src/core.ts`): `CoreClient` thin wrappers over Core

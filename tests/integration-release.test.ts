@@ -35,6 +35,20 @@ async function copyFixture(name: string): Promise<string> {
   return join(root, name);
 }
 
+/**
+ * Materialize a project-local `node_modules` tree in a copied fixture.
+ * Health must be proven by the actual tree (never by the manifest alone),
+ * and `node_modules/` is git-ignored, so healthy fixtures gain their tree
+ * here at test time rather than in the fixture directory.
+ */
+async function materializeInstalledNodePackages(root: string, packages: Record<string, string>): Promise<void> {
+  for (const [name, version] of Object.entries(packages)) {
+    const dir = join(root, 'node_modules', ...name.split('/'));
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(join(dir, 'package.json'), JSON.stringify({ name, version }), 'utf-8');
+  }
+}
+
 function toolInstall(
   name: string,
   command: string,
@@ -154,6 +168,9 @@ describe('Release matrix: healthy-project invariants', () => {
     it(`${fixture}: discovery, requirements, no blocking diagnostics`, async () => {
       const root = await copyFixture(fixture);
       try {
+        if (fixture === 'healthy-node') {
+          await materializeInstalledNodePackages(root, { lodash: '4.17.21' });
+        }
         const { workspace, requirements, diagnostics } = await runPipeline(root, healthyEnv());
         expect(workspace.projects).toHaveLength(1);
         expect(workspace.projects[0]?.type).toBe(type);
@@ -170,6 +187,7 @@ describe('Release matrix: healthy-project invariants', () => {
   it('healthy-node: deterministic planner proposes no executable actions', async () => {
     const root = await copyFixture('healthy-node');
     try {
+      await materializeInstalledNodePackages(root, { lodash: '4.17.21' });
       const { workspace, requirements, diagnostics } = await runPipeline(root, healthyEnv());
       const observation: AgentObservation = { workspace, environment: healthyEnv(), requirements, timestamp: new Date() };
       const analysis: AgentAnalysis = { observation, diagnostics, blockingDiagnostics: blocking(diagnostics), timestamp: new Date() };
@@ -177,6 +195,18 @@ describe('Release matrix: healthy-project invariants', () => {
       const { plan, manualActions } = await planner.createPlan({ analysis, workspaceRoot: root });
       expect(plan.actions).toHaveLength(0);
       expect(manualActions).toHaveLength(0);
+    } finally {
+      await fs.rm(join(root, '..'), { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('node without an installed tree: declared lodash is reported missing and blocking', async () => {
+    const root = await copyFixture('healthy-node');
+    try {
+      const { diagnostics } = await runPipeline(root, healthyEnv());
+      const missing = blocking(diagnostics).filter((diag) => diag.code === 'DEPENDENCY_PACKAGE_MISSING');
+      expect(missing).toHaveLength(1);
+      expect(missing[0]?.requirement?.name).toBe('lodash');
     } finally {
       await fs.rm(join(root, '..'), { recursive: true, force: true }).catch(() => undefined);
     }
@@ -199,7 +229,7 @@ describe('Release matrix: healthy-project invariants', () => {
 });
 
 describe('Release matrix: broken-project invariants', () => {
-  it('broken-node: detects project, requirement, error diagnostic, manual path', async () => {
+  it('broken-node: detects project, requirement, error diagnostics, install + manual path', async () => {
     const root = await copyFixture('broken-node');
     try {
       const { workspace, requirements, diagnostics } = await runPipeline(root, healthyEnv());
@@ -212,11 +242,16 @@ describe('Release matrix: broken-project invariants', () => {
         expect(diag.evidence.length).toBeGreaterThan(0);
         expect(diag.affectedFiles?.length).toBeGreaterThan(0);
       }
+      // The unsupported runtime keeps its system-level manual path, while the
+      // uninstalled lodash dependency deterministically yields an install action.
+      expect(blocked.some((diag) => diag.category === 'runtime')).toBe(true);
+      expect(blocked.some((diag) => diag.code === 'DEPENDENCY_PACKAGE_MISSING')).toBe(true);
       const observation: AgentObservation = { workspace, environment: healthyEnv(), requirements, timestamp: new Date() };
       const analysis: AgentAnalysis = { observation, diagnostics, blockingDiagnostics: blocked, timestamp: new Date() };
       const planner = createDeterministicRepairPlanner();
       const { plan, manualActions } = await planner.createPlan({ analysis, workspaceRoot: root });
-      expect(plan.actions).toHaveLength(0);
+      const install = plan.actions.find((action) => action.type === 'install-dependency');
+      expect(install?.parameters).toMatchObject({ ecosystem: 'npm', package: 'lodash' });
       expect(manualActions.length).toBeGreaterThan(0);
       expect(manualActions[0]?.riskLevel).toBe('system-modification');
     } finally {

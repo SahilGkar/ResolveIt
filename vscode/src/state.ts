@@ -27,32 +27,6 @@ export interface VerificationSummary {
   readonly timestamp: Date;
 }
 
-export interface ProjectTestState {
-  readonly running: boolean;
-  readonly commandLabel?: string;
-  readonly attempted: boolean;
-  readonly success: boolean;
-  readonly exitCode: number;
-  readonly output: string;
-  readonly message: string;
-  readonly cancelled?: boolean;
-}
-
-export interface ProjectSmokeState {
-  readonly running: boolean;
-  readonly commandLabel?: string;
-  readonly attempted: boolean;
-  readonly started: boolean;
-  readonly listening: boolean;
-  readonly responded: boolean;
-  readonly success: boolean;
-  readonly port?: number;
-  readonly url?: string;
-  readonly output: string;
-  readonly message: string;
-  readonly cancelled?: boolean;
-}
-
 export interface AIStatusState {
   readonly provider: string;
   readonly model: string;
@@ -105,8 +79,8 @@ export class ExtensionState {
   private execution?: PlanExecutionSummary;
   private lastError?: ExtensionErrorState;
   private aiSummary?: string;
-  private projectTest?: ProjectTestState;
-  private projectSmoke?: ProjectSmokeState;
+  /** Set when the user finishes a passed verification; derives the Done stage. */
+  private workflowCompleted = false;
 
   getRevision(): number {
     return this.revision;
@@ -128,8 +102,7 @@ export class ExtensionState {
     this.lastRun = undefined;
     this.lastVerification = undefined;
     this.verificationSummary = undefined;
-    this.projectTest = undefined;
-    this.projectSmoke = undefined;
+    this.workflowCompleted = false;
     this.events = [];
     this.hasScanned = false;
     this.activeOperation = undefined;
@@ -261,22 +234,24 @@ export class ExtensionState {
     return this.aiSummary;
   }
 
-  setProjectTest(test: ProjectTestState | undefined): void {
-    this.projectTest = test;
+  /**
+   * Mark the workflow finished after a passed verification. This is what moves
+   * the Verify stage to Done; it never skips verification itself.
+   */
+  markWorkflowCompleted(): void {
+    this.workflowCompleted = true;
     this.revision += 1;
   }
 
-  getProjectTest(): ProjectTestState | undefined {
-    return this.projectTest;
+  isWorkflowCompleted(): boolean {
+    return this.workflowCompleted;
   }
 
-  setProjectSmoke(smoke: ProjectSmokeState | undefined): void {
-    this.projectSmoke = smoke;
-    this.revision += 1;
-  }
-
-  getProjectSmoke(): ProjectSmokeState | undefined {
-    return this.projectSmoke;
+  clearWorkflowCompleted(): void {
+    if (this.workflowCompleted) {
+      this.workflowCompleted = false;
+      this.revision += 1;
+    }
   }
 
   /**
@@ -304,8 +279,7 @@ export class ExtensionState {
     this.execution = undefined;
     this.lastError = undefined;
     this.aiSummary = undefined;
-    this.projectTest = undefined;
-    this.projectSmoke = undefined;
+    this.workflowCompleted = false;
     this.revision += 1;
   }
 
