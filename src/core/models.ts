@@ -772,6 +772,50 @@ export interface AIPreviousAttempt {
   readonly success: boolean;
 }
 
+// AI plan explanation contracts (data models only; explanation is
+// informational and can never create, modify, approve, or execute actions).
+export interface AIExplanationActionContext {
+  readonly actionId: string;
+  readonly actionType: string;
+  readonly description: string;
+  readonly targetFile?: string;
+  readonly package?: string;
+  readonly ecosystem?: string;
+  readonly packageManager?: string;
+  readonly version?: string;
+  readonly diagnosticCode?: string;
+  readonly diagnosticCategory?: string;
+  readonly diagnosticSeverity?: string;
+  readonly diagnosticMessage?: string;
+}
+
+export interface AIExplanationContext {
+  readonly projectName: string;
+  readonly workspaceRoot: string;
+  readonly planDescription: string;
+  /** Exact number of actions in the deterministic plan (ground truth). */
+  readonly totalActions: number;
+  /** True when the plan was too large to include every action. */
+  readonly truncated: boolean;
+  readonly actions: ReadonlyArray<AIExplanationActionContext>;
+}
+
+export interface AIExplainedAction {
+  readonly actionId: string;
+  readonly title: string;
+  readonly whatItMeans: string;
+  readonly whyDetected: string;
+  readonly whatResolveItWillDo: string;
+  readonly expectedResult: string;
+  readonly notes?: string;
+}
+
+export interface AIExplanationResult {
+  readonly summary: string;
+  readonly actions: ReadonlyArray<AIExplainedAction>;
+  readonly generalNotes?: string;
+}
+
 export interface AIVerificationSummary {
   readonly success: boolean;
   readonly summary: string;

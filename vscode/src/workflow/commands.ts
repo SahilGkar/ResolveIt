@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExtensionState } from '../state.js';
 import type { CoreClient } from '../core.js';
-import type { AIConfig } from '../../../src/index.js';
+import type { AIConfig, Diagnostic, RepairPlan } from '../../../src/index.js';
 import { actionFingerprint } from '../../../src/index.js';
 import { OperationCoordinator, type OperationKind, type OperationToken } from '../operations.js';
 import { classifyError, repairFailure, verificationFailure } from '../errors.js';
@@ -51,6 +51,65 @@ function reportClassified(ctx: WorkflowCommandContext, classified: ClassifiedErr
 export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Record<string, (actionId?: string, step?: string, data?: unknown) => Promise<void>> {
   const coordinator = new OperationCoordinator();
   const handlers: Record<string, (actionId?: string, step?: string, data?: unknown) => Promise<void>> = {};
+
+  /**
+   * Fetch a read-only AI explanation for the plan that was just stored. This
+   * never affects the plan, approvals, or execution: on any problem the
+   * explanation resolves to an unavailable reason and the deterministic plan
+   * stays fully usable.
+   */
+  const requestPlanExplanation = async (
+    root: string,
+    plan: RepairPlan,
+    diagnostics: ReadonlyArray<Diagnostic>
+  ): Promise<void> => {
+    try {
+      const outcome = await ctx.core.explainRepairPlan(
+        root,
+        ctx.getAIConfig(),
+        plan,
+        diagnostics,
+        ctx.state.getProjectName() ?? ctx.getWorkspaceRoot()
+      );
+      if (outcome.status === 'ready') {
+        // Exact-set match, mirroring Core validation: the explanation must
+        // describe exactly the plan's actions -- no omissions, no extras.
+        const known = new Set(plan.actions.map((action) => action.id));
+        const seen = new Set<string>();
+        const matches =
+          outcome.explanation.actions.length === plan.actions.length &&
+          outcome.explanation.actions.every((entry) => {
+            if (!known.has(entry.actionId) || seen.has(entry.actionId)) {
+              return false;
+            }
+            seen.add(entry.actionId);
+            return true;
+          });
+        if (!matches) {
+          ctx.state.setAIExplanationUnavailable(
+            'AI explanation did not match the repair plan, so it was discarded. The plan itself is unchanged.'
+          );
+          ctx.logger.warn(`AI explanation discarded: entries do not match plan ${plan.id}.`);
+        } else {
+          ctx.state.setAIExplanation(plan.id, {
+            summary: outcome.explanation.summary,
+            actions: [...outcome.explanation.actions],
+            ...(outcome.explanation.generalNotes === undefined
+              ? {}
+              : { generalNotes: outcome.explanation.generalNotes }),
+          });
+          ctx.logger.info(`AI explanation ready for plan ${plan.id} (${outcome.explanation.actions.length} entr${outcome.explanation.actions.length === 1 ? 'y' : 'ies'}).`);
+        }
+      } else {
+        ctx.state.setAIExplanationUnavailable(outcome.reason);
+        ctx.logger.info(`AI explanation unavailable: ${outcome.reason}`);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      ctx.state.setAIExplanationUnavailable(`AI explanation request failed: ${reason}`);
+      ctx.logger.warn(`AI explanation request failed: ${reason}`);
+    }
+  };
 
   const guarded = (
     kind: OperationKind,
@@ -169,9 +228,9 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
     ctx.postMessage({ type: 'progress', activity: 'Generating repair plan…' });
 
     try {
-      const aiConfig = ctx.getAIConfig();
-      const { plan, diagnostics, aiUsed, aiRejections, fallbackReason, manualActions } =
-        await ctx.core.planRepairsSmart(root, aiConfig);
+      // The Repair Plan always comes from the deterministic planner. AI is
+      // never involved in creating it; it may only explain it afterwards.
+      const { plan, diagnostics, manualActions } = await ctx.core.planDeterministicRepairs(root);
       token.throwIfCancelled();
       ctx.state.setDiagnostics(diagnostics);
       ctx.state.markScanned();
@@ -182,36 +241,23 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
         return;
       }
 
-      ctx.state.setRepairPlan(plan, plan.description, aiUsed);
+      ctx.state.setRepairPlan(plan, plan.description);
       const notices: string[] = [];
-      if (!aiUsed && aiConfig.provider !== 'none' && fallbackReason) {
-        notices.push(`AI planning fell back to deterministic planning: ${fallbackReason}`);
-      }
-      for (const rejection of aiRejections) {
-        notices.push(`AI proposal rejected by Core validation: ${rejection}`);
-      }
       for (const manual of manualActions) {
         notices.push(`Manual action required: ${manual.description}`);
       }
       ctx.state.setRepairPlanNotices(notices);
+      await requestPlanExplanation(root, plan, ctx.state.getDiagnostics());
       ctx.logger.info(
-        `Repair plan (${aiUsed ? 'AI-generated' : 'deterministic'}, ${plan.actions.length} action(s)): ${plan.description}`
+        `Repair plan (deterministic, ${plan.actions.length} action(s)): ${plan.description}`
       );
-      if (!aiUsed && aiConfig.provider !== 'none' && fallbackReason) {
-        ctx.showWarning(`ResolveIt AI planning fell back to deterministic planning: ${fallbackReason}`);
-        ctx.logger.warn(`AI planning fallback: ${fallbackReason}`);
-      }
-      if (aiRejections.length > 0) {
-        ctx.logger.warn(`AI proposals rejected by Core validation: ${aiRejections.join('; ')}`);
-      }
       if (manualActions.length > 0) {
         ctx.showMessage(
           `Manual action required: ${manualActions.map((manual) => manual.description).join('; ')}`
         );
       }
       ctx.showMessage(
-        `Repair plan ready (${aiUsed ? 'AI-generated' : 'deterministic'}): ` +
-          `${plan.actions.length} proposed change(s). Review before applying.`
+        `Repair plan ready: ${plan.actions.length} proposed change(s). Review before applying.`
       );
     } finally {
       ctx.postMessage({ type: 'refresh' });
@@ -431,9 +477,10 @@ export function createWorkflowCommandHandlers(ctx: WorkflowCommandContext): Reco
 
     const root = ctx.getWorkspaceRoot();
     if (root && ctx.state.getHasScanned()) {
-      const { plan, aiUsed } = await ctx.core.planRepairsSmart(root, ctx.getAIConfig());
+      const { plan, diagnostics } = await ctx.core.planDeterministicRepairs(root);
       if (plan.actions.length > 0) {
-        ctx.state.setRepairPlan(plan, plan.description, aiUsed);
+        ctx.state.setRepairPlan(plan, plan.description);
+        await requestPlanExplanation(root, plan, diagnostics);
         // Carry forward decisions only for equivalent actions. New or changed
         // actions stay Awaiting approval; nothing is ever auto-approved here
         // that the user did not previously decide on.

@@ -106,9 +106,7 @@ export interface WorkflowModel {
   };
   readonly repairPlan: {
     readonly plan: RepairPlan | undefined;
-    /** True only when the current plan was produced by the AI planner. */
-    readonly aiUsed: boolean;
-    /** Provenance notes: fallbacks, Core rejections, manual-action items. */
+    /** Provenance notes: manual-action items needing attention. */
     readonly notices: ReadonlyArray<string>;
     readonly approvedCount: number;
     readonly deniedCount: number;
@@ -122,6 +120,26 @@ export interface WorkflowModel {
       readonly remaining: ReadonlyArray<string>;
       readonly message: string;
     };
+  };
+  /**
+   * Read-only AI explanation of the current deterministic plan. Informational
+   * only: it is rendered below the approval controls and can never create,
+   * modify, approve, or execute repair actions.
+   */
+  readonly aiExplanation: {
+    readonly status: 'ready' | 'unavailable' | 'idle';
+    readonly summary?: string;
+    readonly actions?: ReadonlyArray<{
+      readonly actionId: string;
+      readonly title: string;
+      readonly whatItMeans: string;
+      readonly whyDetected: string;
+      readonly whatResolveItWillDo: string;
+      readonly expectedResult: string;
+      readonly notes?: string;
+    }>;
+    readonly generalNotes?: string;
+    readonly reason?: string;
   };
   readonly applyProgress: {
     readonly completed: number;
@@ -169,20 +187,20 @@ function getAIModeOptions(aiConfig: AIConfig, aiStatus?: { available: boolean; p
   return [
     option(
       'none',
-      'No AI (Deterministic)',
+      'No AI',
       'Use built-in diagnostic rules only. No external AI calls.',
       true
     ),
     option(
       'local',
-      'Local AI (Ollama-compatible)',
-      'Use a local Ollama-compatible endpoint for AI-assisted planning.',
+      'Local AI',
+      'Explain repair plans using a local AI endpoint.',
       aiConfig.provider === 'local' && !!aiConfig.baseUrl
     ),
     option(
       'external',
-      'External AI (OpenAI-compatible)',
-      'Use an OpenAI-compatible API (OpenAI, Azure, etc.) for AI-assisted planning.',
+      'External',
+      'Explain repair plans using an external AI service.',
       aiConfig.provider === 'external' && !!aiConfig.baseUrl
     ),
   ];
@@ -326,7 +344,6 @@ function getRepairPlan(state: ExtensionState): WorkflowModel['repairPlan'] {
   if (!plan) {
     return {
       plan: undefined,
-      aiUsed: false,
       notices: [],
       approvedCount: 0,
       deniedCount: 0,
@@ -344,7 +361,6 @@ function getRepairPlan(state: ExtensionState): WorkflowModel['repairPlan'] {
 
   return {
     plan,
-    aiUsed: state.getRepairPlanAiUsed(),
     notices: state.getRepairPlanNotices(),
     approvedCount: approvedIds.size,
     deniedCount: actions.filter((view) => view.lifecycle === 'denied').length,
@@ -533,6 +549,7 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
   const applyProgress = getApplyProgress(state);
   const verifyResult = getVerifyResult(state);
   const failures = getFailures(state);
+  const aiExplanation = getAIExplanation(state);
 
   return {
     currentStep,
@@ -549,8 +566,35 @@ export function buildWorkflowModel(state: ExtensionState, input: WorkflowModelIn
     applyProgress,
     verifyResult,
     failures,
+    aiExplanation,
     errorMessage: state.getLastError()?.message,
   };
+}
+
+/**
+ * Surface the stored AI explanation only when it describes the plan the
+ * model is showing. Otherwise report it as unavailable (plan changed or
+ * never explained) or idle (no plan to explain).
+ */
+function getAIExplanation(state: ExtensionState): WorkflowModel['aiExplanation'] {
+  const plan = state.getRepairPlan();
+  if (!plan) {
+    return { status: 'idle' };
+  }
+  const explanation = state.getAIExplanation();
+  if (explanation) {
+    return {
+      status: 'ready',
+      summary: explanation.summary,
+      actions: [...explanation.actions],
+      ...(explanation.generalNotes === undefined ? {} : { generalNotes: explanation.generalNotes }),
+    };
+  }
+  const reason = state.getAIExplanationUnavailable();
+  if (reason !== undefined) {
+    return { status: 'unavailable', reason };
+  }
+  return { status: 'idle' };
 }
 
 /**

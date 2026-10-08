@@ -106,9 +106,11 @@ describe('workflow panel lifecycle', () => {
 
     const html = lastRenderHtml();
     expect(html).toContain('How should ResolveIt reason?');
-    expect(html).toContain('No AI (Deterministic)');
-    expect(html).toContain('Local AI (Ollama-compatible)');
-    expect(html).toContain('External AI (OpenAI-compatible)');
+    expect(html).toContain('No AI');
+    expect(html).toContain('Local AI');
+    expect(html).toContain('External');
+    expect(html).not.toContain('Ollama-compatible)');
+    expect(html).not.toContain('OpenAI-compatible)');
     expect(html).not.toContain('Loading ResolveIt');
   });
 

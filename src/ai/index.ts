@@ -22,6 +22,14 @@ export type { PlanningPrompt } from './prompt.js';
 
 export { parseAIPlanningResponse } from './response.js';
 
+export {
+  buildExplanationContext,
+  buildExplanationPrompt,
+  parseAIExplanationResponse,
+  requestRepairExplanation,
+} from './explain.js';
+export type { ExplanationInput, ExplanationStatus } from './explain.js';
+
 export { validateAIAction, validateAIPlan } from './validation.js';
 export type { AIValidationInput, AIValidationResult, ValidatedAIAction } from './validation.js';
 

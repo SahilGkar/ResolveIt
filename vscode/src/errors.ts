@@ -45,7 +45,7 @@ export function classifyError(error: unknown, context: string): ClassifiedError 
   if (/api[_-]?key|Bearer\s+\S+|ENOTFOUND|EAI_AGAIN/i.test(message) && /ai|model|provider|fetch|network/i.test(`${context} ${message}`)) {
     return {
       kind: 'ai-unavailable',
-      userMessage: 'ResolveIt AI provider is unavailable. Falling back to deterministic planning.',
+      userMessage: 'ResolveIt AI provider is unavailable. The deterministic repair plan is still available.',
       logDetail: redactSecrets(`${context}: AI provider failure (${message})`),
     };
   }

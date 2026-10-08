@@ -276,9 +276,9 @@ describe('error boundary', () => {
 describe('repair workflow stages', () => {
   function repairCore(plan: RepairPlan, execute: unknown, verify: unknown, calls: string[]): CoreClient {
     return {
-      planRepairsSmart: () => {
+      planDeterministicRepairs: () => {
         calls.push('plan');
-        return Promise.resolve({ plan, diagnostics: [], aiUsed: false, aiRejections: [], manualActions: [] });
+        return Promise.resolve({ plan, diagnostics: [], manualActions: [] });
       },
       executeApproved: (_root: string, _plan: RepairPlan, approved: ReadonlyArray<string>) => {
         calls.push(`execute:${approved.join(',')}`);

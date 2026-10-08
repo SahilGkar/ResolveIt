@@ -251,6 +251,46 @@ describe('command handlers', () => {
     expect(calls).toEqual(['scan:/a']);
   });
 
+  it('should plan agent repairs deterministically regardless of AI configuration', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'resolveit-vscode-agent-'));
+    try {
+      await fs.writeFile(
+        join(workspaceRoot, 'package.json'),
+        JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { express: '^5.1.0' } }),
+        'utf-8'
+      );
+      const core = new CoreClient();
+      const noneResult = await core.planDeterministicRepairs(workspaceRoot);
+      // There is no AI-planning branch anymore: the plan carries no AI
+      // provenance, rejections, or fallback state by construction.
+      expect(Object.keys(noneResult).sort()).toEqual(['diagnostics', 'manualActions', 'plan']);
+      expect(
+        noneResult.plan.actions.some(
+          (action) => action.type === 'install-dependency' && (action.parameters as Record<string, unknown>)['package'] === 'express'
+        )
+      ).toBe(true);
+      // The extension agent path ignores AI configuration for planning: an
+      // unreachable AI provider must still yield the deterministic install.
+      const agentResult = await core.runAgent({
+        workspaceRoot,
+        dryRun: true,
+        aiConfig: { provider: 'local', model: 'unreachable-model', baseUrl: 'http://127.0.0.1:1', timeoutMs: 2000 },
+        maxIterations: 1,
+        approvalCallback: async () => [],
+      });
+      const planned = (
+        agentResult.context as { plans: Array<{ plan: { actions: Array<{ type: string; parameters: unknown }> } }> }
+      ).plans.flatMap((entry) => entry.plan.actions);
+      expect(
+        planned.some(
+          (action) => action.type === 'install-dependency' && (action.parameters as Record<string, unknown>)['package'] === 'express'
+        )
+      ).toBe(true);
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  }, 180000);
+
   it('should run the agent to a resolved state on an empty project', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'resolveit-vscode-run-'));
     try {
@@ -402,7 +442,7 @@ describe('command handlers', () => {
     await handlers['resolveit.askAI']?.();
     await handlers['resolveit.showDetails']?.();
     await handlers['resolveit.openSettings']?.();
-    expect(recorded.messages.some((m) => m.message.includes('AI planning is unavailable'))).toBe(true);
+    expect(recorded.messages.some((m) => m.message.includes('AI explanations are unavailable'))).toBe(true);
     await handlers['resolveit.retryAI']?.();
     expect(ctx.state.getAIStatus()).toBeDefined();
   });

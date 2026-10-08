@@ -66,25 +66,16 @@ function handlersFor(
   return { handlers: createWorkflowCommandHandlers(ctx), info, warnings };
 }
 
-function smartPlan(options: {
-  aiUsed: boolean;
-  rejections?: string[];
-  fallback?: string;
+function deterministicPlan(options: {
   manual?: string[];
 }): {
   plan: RepairPlan;
   diagnostics: never[];
-  aiUsed: boolean;
-  aiRejections: string[];
-  fallbackReason?: string;
   manualActions: Array<{ description: string }>;
 } {
   return {
     plan: makePlan(2),
     diagnostics: [],
-    aiUsed: options.aiUsed,
-    aiRejections: options.rejections ?? [],
-    ...(options.fallback === undefined ? {} : { fallbackReason: options.fallback }),
     manualActions: (options.manual ?? []).map((description) => ({ description })),
   };
 }
@@ -156,7 +147,7 @@ describe('AI mode selection', () => {
   });
 });
 
-describe('repair plan provenance is truthful', () => {
+describe('repair plan is always deterministic', () => {
   function scannedState(): ExtensionState {
     const state = new ExtensionState();
     state.bindWorkspace('C:\\ws');
@@ -166,76 +157,97 @@ describe('repair plan provenance is truthful', () => {
     return state;
   }
 
-  it('should label a deterministic plan as deterministic, never as AI', async () => {
-    const state = scannedState();
-    const core = { planRepairsSmart: async () => smartPlan({ aiUsed: false }) };
-    const { handlers } = handlersFor(state, core, 'none');
-    await handlers['workflow.generatePlan']?.();
-    expect(state.getRepairPlanAiUsed()).toBe(false);
-    const html = renderWorkflowHtml(
+  function renderStatusHtml(state: ExtensionState): string {
+    return renderWorkflowHtml(
       buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' })
     );
-    expect(html).toContain('Deterministic repair plan');
-    expect(html).not.toContain('AI-generated plan');
+  }
+
+  it('should label the plan as deterministic whether AI is off or configured', async () => {
+    for (const aiProvider of ['none', 'local', 'external'] as const) {
+      const state = scannedState();
+      const core = { planDeterministicRepairs: async () => deterministicPlan({}) };
+      const { handlers } = handlersFor(state, core, aiProvider);
+      await handlers['workflow.generatePlan']?.();
+      const html = renderStatusHtml(state);
+      expect(html).toContain('Deterministic repair plan');
+      expect(html).not.toContain('AI-generated plan');
+      expect(html).not.toContain('AI planning');
+      expect(html).not.toContain('rejected by Core validation');
+      expect(html).not.toContain('fell back to deterministic planning');
+    }
   });
 
-  it('should label an AI-produced plan as AI-generated', async () => {
-    const state = scannedState();
-    const core = { planRepairsSmart: async () => smartPlan({ aiUsed: true }) };
-    const { handlers } = handlersFor(state, core, 'local');
-    await handlers['workflow.generatePlan']?.();
-    expect(state.getRepairPlanAiUsed()).toBe(true);
-    const html = renderWorkflowHtml(
-      buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' })
-    );
-    expect(html).toContain('AI-generated plan');
-    expect(html).not.toContain('Deterministic repair plan');
-  });
-
-  it('should surface Core rejections and fallbacks instead of hiding them', async () => {
+  it('should surface manual actions without any AI planning messages', async () => {
     const state = scannedState();
     const core = {
-      planRepairsSmart: async () =>
-        smartPlan({
-          aiUsed: false,
-          rejections: ['unknown action type: delete-everything'],
-          fallback: 'AI planning failed',
-          manual: ['Upgrade node by hand'],
-        }),
+      planDeterministicRepairs: async () => deterministicPlan({ manual: ['Upgrade node by hand'] }),
     };
     const { handlers, warnings } = handlersFor(state, core, 'local');
     await handlers['workflow.generatePlan']?.();
-    expect(warnings.join(' ')).toContain('fell back to deterministic planning');
+    expect(warnings.join(' ')).not.toContain('AI planning');
     const notices = state.getRepairPlanNotices();
-    expect(notices.join(' ')).toContain('unknown action type: delete-everything');
     expect(notices.join(' ')).toContain('Manual action required');
-    const html = renderWorkflowHtml(
-      buildWorkflowModel(state, { hasWorkspace: true, workspaceName: 'ws', workspaceRoot: 'C:\\ws' })
-    );
-    expect(html).toContain('rejected by Core validation');
+    expect(notices.join(' ')).not.toContain('AI planning');
+    expect(notices.join(' ')).not.toContain('rejected by Core validation');
+    const html = renderStatusHtml(state);
+    expect(html).not.toContain('AI planning');
+    expect(html).not.toContain('rejected by Core validation');
   });
 
-  it('should fall back to deterministic planning when the AI endpoint is unreachable', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'resolveit-ai-fallback-'));
+  it('should generate the repair plan without invoking the AI planner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'resolveit-deterministic-plan-'));
     try {
       await writeFile(
         join(root, 'package.json'),
-        JSON.stringify({ name: 'fixture', version: '1.0.0' }),
+        JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { express: '^5.1.0' } }),
         'utf-8'
       );
       const core = new CoreClient();
-      const result = await core.planRepairsSmart(
-        root,
-        { provider: 'local', model: 'unreachable-model', baseUrl: 'http://127.0.0.1:1', timeoutMs: 2000 },
-        30000
-      );
+      const result = await core.planDeterministicRepairs(root, 30000);
       expect(result.plan).toBeDefined();
-      expect(result.aiUsed).toBe(false);
-      expect(result.fallbackReason).toBeTruthy();
+      expect(Object.keys(result).sort()).toEqual(['diagnostics', 'manualActions', 'plan']);
+      const install = result.plan.actions.find((action) => action.type === 'install-dependency');
+      expect(install?.parameters).toMatchObject({ ecosystem: 'npm', package: 'express' });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   }, 120000);
+
+  it('should produce an identical plan regardless of AI configuration', async () => {
+    const withoutAI = scannedState();
+    const withAI = scannedState();
+    const deterministic = {
+      planDeterministicRepairs: async () => deterministicPlan({}),
+    };
+    const { handlers: plainHandlers } = handlersFor(withoutAI, deterministic, 'none');
+    const { handlers: aiHandlers } = handlersFor(withAI, deterministic, 'local');
+    await plainHandlers['workflow.generatePlan']?.();
+    await aiHandlers['workflow.generatePlan']?.();
+    const stripIds = (plan: RepairPlan | undefined) =>
+      (plan?.actions ?? []).map((action) => ({
+        type: action.type,
+        description: action.description,
+        parameters: { ...(action.parameters as Record<string, unknown>), workspaceRoot: '<root>' },
+      }));
+    expect(stripIds(withAI.getRepairPlan())).toEqual(stripIds(withoutAI.getRepairPlan()));
+    expect(renderStatusHtml(withAI)).toBe(renderStatusHtml(withoutAI));
+  });
+
+  it('should use concise AI mode labels', () => {
+    const state = new ExtensionState();
+    const model = buildWorkflowModel(state, {
+      hasWorkspace: true,
+      workspaceName: 'ws',
+      workspaceRoot: '/ws',
+      requestedStep: 'ai-mode',
+    });
+    const labels = model.aiModeOptions.map((option) => option.label);
+    expect(labels).toEqual(['No AI', 'Local AI', 'External']);
+    const html = renderWorkflowHtml(model);
+    expect(html).not.toContain('Ollama-compatible)');
+    expect(html).not.toContain('OpenAI-compatible)');
+  });
 });
 
 describe('per-action verification is honest', () => {

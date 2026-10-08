@@ -70,6 +70,10 @@ export {
   AIPlanningConstraints,
   AIPreviousAttempt,
   AIVerificationSummary,
+  AIExplanationContext,
+  AIExplanationResult,
+  AIExplainedAction,
+  AIExplanationActionContext,
 } from './core/models.js';
 
 export {
@@ -296,6 +300,10 @@ export {
   toolNameForActionType,
   buildPlanningPrompt,
   parseAIPlanningResponse,
+  buildExplanationContext,
+  buildExplanationPrompt,
+  parseAIExplanationResponse,
+  requestRepairExplanation,
   validateAIAction,
   validateAIPlan,
   LocalAIProvider,

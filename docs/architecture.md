@@ -374,11 +374,11 @@ install-tool range handling, lockfile/transitive filtering).
   are Skipped (filtered from failure reporting in every handler); failed actions
   never render Approved; approval controls vanish past the approval stage;
   Verified requires execution success plus a passing verification.
-- **Truthful provenance**: `CoreClient.planRepairsSmart` routes through
-  `createAIPlanner` (validated, with deterministic fallback) when an AI provider
-  is configured, and the plan is labelled AI-generated or deterministic by the
-  actual path. Core rejection reasons, AI fallbacks, and manual-action items
-  surface as notices on the plan screen.
+- **Deterministic provenance**: `CoreClient.planDeterministicRepairs` builds
+  the Repair Plan with the deterministic Core planner only; AI is never
+  involved in creating it, so there is no AI provenance, rejection, or
+  fallback state to report. Manual-action items surface as notices on the
+  plan screen.
 - **Test Project vs Run / Smoke Test** (`src/agent/project-test.ts`): terminating
   test commands only (`npm test`, `pytest -q`, `cargo test`, `go test ./...`,
   `dotnet test`, `mvn test`, `gradle test`) run through the safe command runner
@@ -426,12 +426,26 @@ install-tool range handling, lockfile/transitive filtering).
   and the Project screen falls back to the workspace folder name when no
   formal project name was detected. Legacy `repair`/`run` and panel-internal
   approval commands are hidden from Command Palette discovery.
+- **AI Explanation pass**: the Repair Plan screen gained a read-only AI
+  Explanation section below the approval controls (`src/ai/explain.ts`,
+  optional `AIProvider.explainPlan`, validated per-action entries, rendered
+  with no commands). The deterministic plan stays authoritative; AI
+  unavailability or invalid output degrades to a notice with the plan fully
+  usable.
+- **AI separation pass**: AI planning removed from the workflow Repair Plan
+  (`CoreClient.planDeterministicRepairs`; `aiUsed` plumbing deleted from
+  state, model, and render). Explanations are grounded in exact deterministic
+  facts (action count, package names, versions, package manager) and must
+  cover exactly the plan's actions with schema-only fields, or they are
+  discarded.
 
 ### Validation performed (Phase 15 + corrections, updated at handoff)
 
-- Core: 31 files, 501 tests, all passing; typecheck, lint, build pass.
-- Extension: 9 files, 175 tests, all passing; typecheck, lint, build,
-  `validate-package`, `vsce package` pass.
+- Core: 32 files, 522 tests (full suite green on this tree, including 21
+  explanation tests green); typecheck, lint, build pass.
+- Extension: 10 files, 185 tests, all passing per-file runs (1 environment-sensitive
+  timeout, see root README); typecheck, lint, build, `validate-package`,
+  `vsce package` pass.
 - Headless end-to-end runs of the real built bundle against real fixture
   projects through the panel message protocol: full success path (analyze →
   plan → approve → real `npm install` → verify → Done screen) and full
@@ -777,6 +791,9 @@ to `DeterministicRepairPlanner` with an explicit logged reason; partial valid ou
 uses the valid subset (rejections recorded on the plan). Re-planning passes the new
 verification summary and previous attempts to the model; Phase 6 fingerprint loop
 prevention remains authoritative. AI never controls state transitions.
+(This module retains unit coverage, but no product flow invokes it anymore:
+the VS Code workflow, the extension agent runner, and the CLI `run` command
+all plan with the deterministic planner only. AI is explanation-only.)
 
 ### Security boundaries
 

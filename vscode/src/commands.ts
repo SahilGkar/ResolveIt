@@ -189,8 +189,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     ctx.status.showBusy('planning repairs', 'ResolveIt: planning repairs');
     ctx.state.setActiveOperation({ kind: 'analyze', activity: 'Planning repairs…' });
     ctx.refreshViews();
-    const { plan, diagnostics, aiUsed, aiRejections, fallbackReason, manualActions } =
-      await ctx.core.planRepairsSmart(root, ctx.getAIConfig());
+    const { plan, diagnostics, manualActions } =
+      await ctx.core.planDeterministicRepairs(root);
     token.throwIfCancelled();
     if (!ctx.workspaces.isCurrent(root)) {
       ctx.logger.warn(`Workspace changed during repair planning; discarding plan for ${root}.`);
@@ -203,17 +203,11 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       ctx.refreshViews();
       return;
     }
-    ctx.logger.info(`Repair plan (${aiUsed ? 'AI-generated' : 'deterministic'}, ${planSummary(plan)}):`);
+    ctx.logger.info(`Repair plan (deterministic, ${planSummary(plan)}):`);
     for (const action of plan.actions) {
       for (const line of actionLines(action)) {
         ctx.logger.info(`  ${line}`);
       }
-    }
-    if (aiRejections.length > 0) {
-      ctx.logger.warn(`AI proposals rejected by Core validation: ${aiRejections.join('; ')}`);
-    }
-    if (fallbackReason) {
-      ctx.logger.warn(`AI planning fell back to deterministic planning: ${fallbackReason}`);
     }
     if (manualActions.length > 0) {
       ctx.messages.info(
@@ -448,9 +442,8 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
     ctx.status.showBusy('planning repairs', 'ResolveIt: generating repair plan');
     ctx.refreshViews();
     try {
-      const aiConfig = ctx.getAIConfig();
-      const { plan, diagnostics, aiUsed, aiRejections, fallbackReason, manualActions } =
-        await ctx.core.planRepairsSmart(root, aiConfig);
+      const { plan, diagnostics, manualActions } =
+        await ctx.core.planDeterministicRepairs(root);
       token.throwIfCancelled();
       if (!ctx.workspaces.isCurrent(root)) {
         ctx.logger.warn(`Workspace changed during repair planning; discarding plan for ${root}.`);
@@ -466,18 +459,12 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
         ctx.openWorkflow?.('status');
         return;
       }
-      ctx.state.setRepairPlan(plan, plan.description, aiUsed);
-      ctx.logger.info(`Repair plan (${aiUsed ? 'AI-generated' : 'deterministic'}, ${planSummary(plan)}): ${plan.description}`);
+      ctx.state.setRepairPlan(plan, plan.description);
+      ctx.logger.info(`Repair plan (deterministic, ${planSummary(plan)}): ${plan.description}`);
       for (const action of plan.actions) {
         for (const line of actionLines(action)) {
           ctx.logger.info(`  ${line}`);
         }
-      }
-      if (!aiUsed && aiConfig.provider !== 'none' && fallbackReason) {
-        ctx.messages.warn(`ResolveIt AI planning fell back to deterministic planning: ${fallbackReason}`);
-      }
-      if (aiRejections.length > 0) {
-        ctx.logger.warn(`AI proposals rejected by Core validation: ${aiRejections.join('; ')}`);
       }
       if (manualActions.length > 0) {
         ctx.messages.info(
@@ -485,7 +472,7 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
         );
       }
       ctx.messages.info(
-        `Repair plan ready (${aiUsed ? 'AI-generated' : 'deterministic'}): ResolveIt wants to make ${plan.actions.length} change${plan.actions.length === 1 ? '' : 's'}. Review each change before anything is modified.`
+        `Repair plan ready: ResolveIt wants to make ${plan.actions.length} change${plan.actions.length === 1 ? '' : 's'}. Review each change before anything is modified.`
       );
       ctx.openWorkflow?.('repair-plan');
     } finally {
@@ -629,7 +616,7 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       return;
     }
     ctx.messages.info(
-      'ResolveIt: AI planning is unavailable. Deterministic diagnostics still work — review the problems found.'
+      'ResolveIt: AI explanations are unavailable. The deterministic repair plan still works — review the problems found.'
     );
     ctx.openWorkflow?.('ai-mode');
   };
@@ -673,7 +660,7 @@ export function createCommandHandlers(ctx: CommandContext): Record<string, (...a
       ctx.openSettings('resolveit.ai');
       return;
     }
-    ctx.messages.info('ResolveIt: adjust the resolveit.ai.* settings to configure AI planning.');
+    ctx.messages.info('ResolveIt: adjust the resolveit.ai.* settings to configure AI explanations.');
   };
 
   return handlers;

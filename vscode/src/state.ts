@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AIExplainedAction,
   Diagnostic,
   EnvironmentInfo,
   ParsedRequirements,
@@ -7,6 +8,14 @@ import type {
   RepairPlan,
   RepairResult,
 } from '../../src/index.js';
+
+export interface AIExplanationState {
+  /** Id of the deterministic plan this explanation describes. */
+  readonly planId: string;
+  readonly summary: string;
+  readonly actions: ReadonlyArray<AIExplainedAction>;
+  readonly generalNotes?: string;
+}
 
 export interface LastRunSummary {
   readonly status: string;
@@ -70,9 +79,7 @@ export class ExtensionState {
   private hasScanned = false;
   private activeOperation?: ActiveOperation;
   private repairPlan?: RepairPlan;
-  /** True when the current plan was produced by the AI planner (not deterministic). */
-  private repairPlanAiUsed = false;
-  /** Human-readable notes about plan provenance (fallbacks, rejections, manual items). */
+  /** Human-readable notes about the plan (manual items needing attention). */
   private repairPlanNotices: ReadonlyArray<string> = [];
   private planDiagnosticsRevision = -1;
   private approvals = new Map<string, Exclude<ApprovalState, 'awaiting'>>();
@@ -81,6 +88,13 @@ export class ExtensionState {
   private aiSummary?: string;
   /** Set when the user finishes a passed verification; derives the Done stage. */
   private workflowCompleted = false;
+  /**
+   * Read-only AI explanation of the current deterministic plan. Informational
+   * only: it can never create, modify, approve, or execute repair actions.
+   */
+  private aiExplanation?: AIExplanationState;
+  /** Why no AI explanation is available (AI off, unreachable, invalid output). */
+  private aiExplanationUnavailable?: string;
 
   getRevision(): number {
     return this.revision;
@@ -107,7 +121,6 @@ export class ExtensionState {
     this.hasScanned = false;
     this.activeOperation = undefined;
     this.repairPlan = undefined;
-    this.repairPlanAiUsed = false;
     this.repairPlanNotices = [];
     this.planDiagnosticsRevision = -1;
     this.diagnosticsRevision = 0;
@@ -115,6 +128,8 @@ export class ExtensionState {
     this.execution = undefined;
     this.lastError = undefined;
     this.aiSummary = undefined;
+    this.aiExplanation = undefined;
+    this.aiExplanationUnavailable = undefined;
     this.revision += 1;
     return true;
   }
@@ -139,12 +154,13 @@ export class ExtensionState {
     return this.activeOperation;
   }
 
-  setRepairPlan(plan: RepairPlan, summary?: string, aiUsed = false): void {
+  setRepairPlan(plan: RepairPlan, summary?: string): void {
     this.repairPlan = plan;
-    this.repairPlanAiUsed = aiUsed;
     this.repairPlanNotices = [];
     this.approvals = new Map();
     this.execution = undefined;
+    this.aiExplanation = undefined;
+    this.aiExplanationUnavailable = undefined;
     this.planDiagnosticsRevision = this.diagnosticsRevision;
     if (summary !== undefined) {
       this.aiSummary = summary;
@@ -154,20 +170,54 @@ export class ExtensionState {
 
   clearRepairPlan(): void {
     this.repairPlan = undefined;
-    this.repairPlanAiUsed = false;
     this.repairPlanNotices = [];
     this.approvals = new Map();
     this.execution = undefined;
+    this.aiExplanation = undefined;
+    this.aiExplanationUnavailable = undefined;
     this.revision += 1;
+  }
+
+  /**
+   * Store an AI explanation for exactly the current plan. The plan id must
+   * match and every explained action id must belong to the plan, so a stale
+   * or foreign explanation can never describe different actions.
+   */
+  setAIExplanation(planId: string, explanation: Omit<AIExplanationState, 'planId'>): void {
+    const plan = this.repairPlan;
+    if (plan?.id !== planId) {
+      return;
+    }
+    const known = new Set(plan.actions.map((action) => action.id));
+    if (!explanation.actions.every((entry) => known.has(entry.actionId))) {
+      return;
+    }
+    this.aiExplanation = { planId, ...explanation };
+    this.aiExplanationUnavailable = undefined;
+    this.revision += 1;
+  }
+
+  getAIExplanation(): AIExplanationState | undefined {
+    if (this.aiExplanation && this.repairPlan?.id === this.aiExplanation.planId) {
+      return this.aiExplanation;
+    }
+    return undefined;
+  }
+
+  setAIExplanationUnavailable(reason: string | undefined): void {
+    this.aiExplanationUnavailable = reason;
+    if (reason !== undefined) {
+      this.aiExplanation = undefined;
+    }
+    this.revision += 1;
+  }
+
+  getAIExplanationUnavailable(): string | undefined {
+    return this.aiExplanationUnavailable;
   }
 
   getRepairPlan(): RepairPlan | undefined {
     return this.repairPlan;
-  }
-
-  /** Whether the current plan came from the AI planner (false = deterministic). */
-  getRepairPlanAiUsed(): boolean {
-    return this.repairPlan !== undefined && this.repairPlanAiUsed;
   }
 
   setRepairPlanNotices(notices: ReadonlyArray<string>): void {
@@ -271,7 +321,6 @@ export class ExtensionState {
     this.hasScanned = false;
     this.activeOperation = undefined;
     this.repairPlan = undefined;
-    this.repairPlanAiUsed = false;
     this.repairPlanNotices = [];
     this.planDiagnosticsRevision = -1;
     this.diagnosticsRevision = 0;
@@ -280,6 +329,8 @@ export class ExtensionState {
     this.lastError = undefined;
     this.aiSummary = undefined;
     this.workflowCompleted = false;
+    this.aiExplanation = undefined;
+    this.aiExplanationUnavailable = undefined;
     this.revision += 1;
   }
 

@@ -284,7 +284,7 @@ function renderAiModeStep(model: WorkflowModel): string {
   return `
     <div class="wf-section">
       <h2 class="wf-section-title">How should ResolveIt reason?</h2>
-      <p class="wf-card-subtitle">Choose how ResolveIt should generate repair plans. "Connected" means the provider was actually reached; selecting an option alone never marks it available. You can change this later in settings. API keys are never shown here.</p>
+      <p class="wf-card-subtitle">Choose whether ResolveIt explains repair plans with AI. "Connected" means the provider was actually reached. You can change this later in settings. API keys are never shown here.</p>
       <div class="wf-ai-options">${optionsHtml}</div>
       <div class="wf-card" style="margin-top: 12px;">
         <p class="wf-card-subtitle">${connectionLine}</p>
@@ -530,7 +530,7 @@ function renderRepairPlanStep(model: WorkflowModel): string {
     ? `<div class="wf-notice">${repairPlan.systemPendingCount} system-level change${repairPlan.systemPendingCount === 1 ? '' : 's'} need${repairPlan.systemPendingCount === 1 ? 's' : ''} individual review — Approve All does not cover ${repairPlan.systemPendingCount === 1 ? 'it' : 'them'}.</div>`
     : '';
 
-  const provenance = repairPlan.aiUsed ? 'AI-generated plan' : 'Deterministic repair plan';
+  const provenance = 'Deterministic repair plan';
   const verifiedNote = repairPlan.actions.some((item) => item.lifecycle === 'verified')
     ? '<p class="wf-card-subtitle">Verification re-ran diagnostics against the whole project and found no remaining blocking diagnostics. Badges reflect that project-level confirmation, not proof that each individual action caused its fix.</p>'
     : '';
@@ -553,6 +553,49 @@ function renderRepairPlanStep(model: WorkflowModel): string {
         <button class="wf-btn primary" data-command="workflow.apply" ${repairPlan.approvedCount === 0 ? 'disabled' : ''} title="Apply the fixes you approved">Fix These Problems</button>
       </div>
       ${repairPlan.approvedCount === 0 ? '<p class="wf-card-subtitle">Approve at least one fix above to continue. System-level fixes always need your individual review.</p>' : ''}
+      ${renderAiExplanation(model)}
+    </div>
+  `;
+}
+
+/**
+ * Read-only AI explanation of the deterministic plan above. Rendered strictly
+ * below the approval controls, visually distinct, with no commands: it can
+ * never approve, apply, or execute anything.
+ */
+function renderAiExplanation(model: WorkflowModel): string {
+  const { aiExplanation } = model;
+  if (aiExplanation.status === 'idle') {
+    return '';
+  }
+  if (aiExplanation.status === 'unavailable') {
+    return `
+      <div class="wf-card" style="margin-top: 12px;">
+        <div class="wf-card-header"><span class="wf-card-title">AI Explanation</span></div>
+        <p class="wf-card-subtitle">AI explanation unavailable. The repair plan above is still available.</p>
+      </div>
+    `;
+  }
+  const entries = (aiExplanation.actions ?? [])
+    .map(
+      (entry) => `
+      <details class="wf-card" style="margin-top: 8px;">
+        <summary class="wf-card-title" style="cursor: pointer;">${escapeHtml(entry.title)}</summary>
+        <p><strong>What it means</strong><br>${escapeHtml(entry.whatItMeans)}</p>
+        <p><strong>Why it was detected</strong><br>${escapeHtml(entry.whyDetected)}</p>
+        <p><strong>What ResolveIt will do</strong><br>${escapeHtml(entry.whatResolveItWillDo)}</p>
+        <p><strong>Expected result</strong><br>${escapeHtml(entry.expectedResult)}</p>
+        ${entry.notes ? `<p><strong>Notes</strong><br>${escapeHtml(entry.notes)}</p>` : ''}
+      </details>`
+    )
+    .join('');
+  return `
+    <div class="wf-card" style="margin-top: 12px;">
+      <div class="wf-card-header"><span class="wf-card-title">AI Explanation</span></div>
+      <p class="wf-card-subtitle">An explanation of the repair plan above, not the plan itself. Nothing here approves or runs anything.</p>
+      <p>${escapeHtml(aiExplanation.summary ?? '')}</p>
+      ${entries}
+      ${aiExplanation.generalNotes ? `<p class="wf-card-subtitle">${escapeHtml(aiExplanation.generalNotes)}</p>` : ''}
     </div>
   `;
 }

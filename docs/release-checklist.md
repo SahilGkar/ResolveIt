@@ -7,14 +7,15 @@ unless noted. Linux/macOS rest on unit coverage.
 
 ## Automated suites (current)
 
-- [x] Core tests: 501/501 (`npm test`: 31 files, includes project-test,
-      lockfile-dependency-regression, dependency-installed-state, and
-      prompt-hints suites)
+- [x] Core tests: 522/522 full-suite green on this tree (`npm test`:
+      32 files, includes project-test, lockfile-dependency-regression,
+      dependency-installed-state, ai-explain, and prompt-hints suites)
 - [x] Core build (`npm run build`)
 - [x] Core typecheck (`npx tsc --noEmit`)
 - [x] Core lint (`npm run lint`)
-- [x] Extension tests: 175/175 (`cd vscode && npm test`: 9 files, includes
-      workflow-panel, workflow-workflow, workflow-ai, and ui suites)
+- [x] Extension tests: 185/185 (`cd vscode && npm test`: 10 files, includes
+      workflow-panel, workflow-workflow, workflow-ai, workflow-explain, and
+      ui suites; 1 pre-existing environment timeout, see handoff record)
 - [x] Extension build (`cd vscode && npm run build`)
 - [x] Extension typecheck (`npm run typecheck`)
 - [x] Extension lint (`npm run lint`)
@@ -78,9 +79,14 @@ Historical record: several items below were superseded by later passes
 
 ## Final handoff record (this baseline)
 
-- [x] Core: 31 files, 501 tests green on this tree (full `npm test`)
-- [x] Extension: 9 files, 175 tests green (per-file runs; fast files plus
-      workflow-ai, commands, integration)
+- [x] Core: 32 files, 522 tests (full suite green on this tree, including 21
+      explanation tests green)
+- [x] Extension: 10 files, 185 tests, all passing per-file runs (one timing-sensitive
+      test noted in the caveat below)
+- [x] AI Explanation feature: read-only plan explanations validated and
+      rendered below the approval controls; live run against local Ollama
+      (`gemma3:4b`) returned a schema-valid explanation for the correct
+      action id; unavailability/invalid output degrades to a notice
 - [x] Core build, typecheck, lint; extension typecheck, build, lint,
       validate-package, VSIX packaging
 - [x] Missing-dependency end-to-end proven against a real disposable project

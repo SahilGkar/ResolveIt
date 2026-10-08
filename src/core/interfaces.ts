@@ -71,6 +71,8 @@ import type {
   AIPlanningConstraints,
   AIPreviousAttempt,
   AIVerificationSummary,
+  AIExplanationContext,
+  AIExplanationResult,
 } from './models.js';
 
 export type {
@@ -146,6 +148,8 @@ export type {
   AIPlanningConstraints,
   AIPreviousAttempt,
   AIVerificationSummary,
+  AIExplanationContext,
+  AIExplanationResult,
 };
 
 export interface WorkspaceManager {
@@ -277,6 +281,12 @@ export interface AIProvider {
   // Phase 7: structured AI planning. Optional so existing providers keep working;
   // the agent uses deterministic planning whenever this is absent.
   generatePlan?(context: AIPlanningContext): Promise<AIPlanningResult>;
+
+  // Plan explanation (informational only). Optional; when absent, or when the
+  // provider is unavailable, callers fall back to the deterministic plan
+  // without an explanation. Explanations can never create, modify, approve,
+  // or execute repair actions.
+  explainPlan?(context: AIExplanationContext): Promise<AIExplanationResult>;
 }
 
 export interface Agent {

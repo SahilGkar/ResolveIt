@@ -1,14 +1,13 @@
 import {
-  analyzeObservation,
+  buildExplanationContext,
   createAgentRunner,
-  createAIPlanner,
   createAIProviderFromConfig,
   createDiagnosticEngine,
   createRepairExecutor,
   createRepairPlanner,
   diagnosticKey,
   isBlockingDiagnostic,
-  observeWorkspace,
+  requestRepairExplanation,
   sanitizeAIConfig,
   scanEnvironment,
   scanRequirements,
@@ -17,6 +16,7 @@ import {
 import type {
   AgentRunResult,
   AIConfig,
+  AIExplainedAction,
   Diagnostic,
   EnvironmentInfo,
   ParsedRequirements,
@@ -74,68 +74,30 @@ export class CoreClient {
   }
 
   async planRepairs(workspaceRoot: string, timeout = 60000): Promise<{ plan: RepairPlan; diagnostics: ReadonlyArray<Diagnostic> }> {
-    const { plan, diagnostics } = await this.planRepairsSmart(workspaceRoot, { provider: 'none' }, timeout);
+    const { plan, diagnostics } = await this.planDeterministicRepairs(workspaceRoot, timeout);
     return { plan, diagnostics };
   }
 
   /**
-   * Repair planning that honestly reports which engine produced the plan.
-   *
-   * - `provider: 'none'` (or an unavailable/erroring AI provider) uses the
-   *   deterministic Core planner; `aiUsed` is false.
-   * - A configured provider goes through `createAIPlanner`, which validates the
-   *   AI response against the Core trust boundary (`validateAIPlan`) and falls
-   *   back to deterministic planning when the AI is unavailable or invalid;
-   *   `aiUsed` is true only when validated AI actions survived.
+   * Repair planning for the user-facing workflow. Always uses the
+   * deterministic Core planner: AI is never involved in creating the Repair
+   * Plan (it may only explain the finished plan afterwards). The result
+   * carries no AI provenance, rejections, or fallback state because there is
+   * no AI planning step to report on.
    */
-  async planRepairsSmart(
+  async planDeterministicRepairs(
     workspaceRoot: string,
-    aiConfig: AIConfig,
     timeout = 60000
   ): Promise<{
     plan: RepairPlan;
     diagnostics: ReadonlyArray<Diagnostic>;
-    aiUsed: boolean;
-    aiRejections: ReadonlyArray<string>;
-    fallbackReason?: string;
     manualActions: ReadonlyArray<PlannedManualAction>;
   }> {
+    // The same deterministic planner as before; only the AI branch is gone,
+    // so the plan is now identical whether AI is configured or not.
     const diagnostics = await this.runDiagnostics(workspaceRoot, timeout);
-    if (aiConfig.provider === 'none') {
-      const plan = await this.deterministicPlan(workspaceRoot, diagnostics);
-      return { plan, diagnostics, aiUsed: false, aiRejections: [], manualActions: [] };
-    }
-
-    const provider = createAIProviderFromConfig(aiConfig);
-    const aiRejections: string[] = [];
-    let fallbackReason: string | undefined;
-    const planner = createAIPlanner(
-      provider,
-      {
-        onFallback: (reason, details) => {
-          fallbackReason = details ?? reason;
-        },
-        onAIResult: (info) => {
-          aiRejections.push(...info.rejections);
-        },
-      }
-    );
-    const observation = await observeWorkspace(workspaceRoot, timeout);
-    const analysis = await analyzeObservation(observation);
-    const result = await planner({
-      analysis,
-      workspaceRoot,
-      attemptedFingerprints: new Set<string>(),
-      previousAttempts: [],
-    });
-    return {
-      plan: result.plan,
-      diagnostics,
-      aiUsed: result.aiUsed === true,
-      aiRejections,
-      ...(fallbackReason === undefined ? {} : { fallbackReason }),
-      manualActions: result.manualActions,
-    };
+    const plan = await this.deterministicPlan(workspaceRoot, diagnostics);
+    return { plan, diagnostics, manualActions: [] };
   }
 
   private async deterministicPlan(workspaceRoot: string, diagnostics: ReadonlyArray<Diagnostic>): Promise<RepairPlan> {
@@ -164,6 +126,28 @@ export class CoreClient {
     return plan;
   }
 
+  /**
+   * Request a read-only AI explanation of an already-built deterministic
+   * plan. The explanation is informational only: it can never create,
+   * modify, approve, or execute repair actions. Unavailability (AI off,
+   * unreachable, invalid output) resolves to a reason, never a throw, so
+   * the repair plan stays usable without it.
+   */
+  async explainRepairPlan(
+    workspaceRoot: string,
+    aiConfig: AIConfig,
+    plan: RepairPlan,
+    diagnostics: ReadonlyArray<Diagnostic>,
+    projectName: string
+  ): Promise<
+    | { status: 'ready'; explanation: { summary: string; actions: ReadonlyArray<AIExplainedAction>; generalNotes?: string } }
+    | { status: 'unavailable'; reason: string }
+  > {
+    const provider = createAIProviderFromConfig(aiConfig);
+    const context = buildExplanationContext({ projectName, workspaceRoot, plan, diagnostics });
+    return requestRepairExplanation(provider, context);
+  }
+
   executeApproved(
     workspaceRoot: string,
     plan: RepairPlan,
@@ -180,9 +164,10 @@ export class CoreClient {
   }
 
   runAgent(request: AgentRunRequest): Promise<{ context: unknown; result: AgentRunResult }> {
-    const provider = createAIProviderFromConfig(request.aiConfig);
-    const planner = createAIPlanner(provider);
-    const runner = createAgentRunner({ plan: planner, onEvent: request.onEvent });
+    // The agent runner always plans deterministically (its built-in default).
+    // AI is explanation-only product-wide and plays no role in plan
+    // generation; request.aiConfig is retained for status reporting only.
+    const runner = createAgentRunner({ onEvent: request.onEvent });
     return runner.run({
       workspaceRoot: request.workspaceRoot,
       dryRun: request.dryRun,

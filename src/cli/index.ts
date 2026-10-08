@@ -6,10 +6,9 @@ import { scanRequirements, reqInfoToJSON, formatRequirementsSummary } from '../r
 import { diagnose, formatDiagnosticsSummary, diagnosticsToJSON } from '../diagnostics/index.js';
 import type { RepairExecutionOptions } from '../repair/index.js';
 import { createRepairExecutor, createRepairPlanner } from '../repair/index.js';
-import { createAgentRunner, createAIPlanner } from '../agent/index.js';
+import { createAgentRunner } from '../agent/index.js';
 import type { AgentRunResult } from '../agent/index.js';
 import { createAIProviderFromConfig, resolveAIConfig, sanitizeAIConfig } from '../ai/index.js';
-import type { AIConfig } from '../ai/index.js';
 import type { Workspace, Language, ProjectMarker, RepairPlan, RepairAction } from '../core/models.js';
 
 export const program = new Command();
@@ -338,20 +337,14 @@ async function executeAgentRun(
   workspaceRoot: string,
   options: { dryRun: boolean; json: boolean; approve?: string; ai?: string; aiModel?: string; aiBaseUrl?: string }
 ): Promise<void> {
-  const aiConfig: AIConfig = resolveAIConfig({
-    ...(options.ai === undefined ? {} : { provider: options.ai as AIConfig['provider'] }),
-    ...(options.aiModel === undefined ? {} : { model: options.aiModel }),
-    ...(options.aiBaseUrl === undefined ? {} : { baseUrl: options.aiBaseUrl }),
-  });
-  const aiProvider = createAIProviderFromConfig(aiConfig);
-  const aiPlanner = createAIPlanner(aiProvider, {
-    onFallback: (reason, details) => {
-      if (!options.json) {
-        console.log(`AI planning fallback (${reason})${details ? `: ${details}` : ''}`);
-      }
-    },
-  });
-  const runner = createAgentRunner({ plan: aiPlanner });
+  // Repair plans always come from the deterministic planner. AI is
+  // explanation-only product-wide and plays no role in plan generation, so
+  // the --ai flags below do not affect planning. They are still accepted so
+  // existing invocations keep working.
+  if (options.ai !== undefined && options.ai !== 'none' && !options.json) {
+    console.log('AI planning is disabled; using the deterministic planner.');
+  }
+  const runner = createAgentRunner({});
 
   const approvalCallback = (plan: RepairPlan, _manual: ReadonlyArray<{ description: string }>): Promise<ReadonlyArray<string>> => {
     const approved: string[] = [];

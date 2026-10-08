@@ -89,7 +89,8 @@ answer general questions, refactor, or edit code on request. Its focus is:
 - runtime and toolchain detection
 - dependency and requirement analysis (declared vs actually installed)
 - deterministic diagnostics
-- AI-assisted repair planning over deterministic facts
+- deterministic repair planning
+- AI explanations of the deterministic plan
 - safe, approved repair execution
 - verification and auditability
 
@@ -154,8 +155,8 @@ checked against this repository.
 | Purpose | Project environment diagnosis + safe, approved repair |
 | Approach | Deterministic Core first; AI is an optional planning layer |
 | Language | TypeScript (strict), Node.js >= 20 |
-| Core tests | 31 files, 501 tests (`npm test`) |
-| Extension tests | 9 files, 175 tests (`cd vscode && npm test`, `vscode` API mocked) |
+| Core tests | 32 files, 522 tests (`npm test`) |
+| Extension tests | 10 files, 185 tests (`cd vscode && npm test`, `vscode` API mocked) |
 | Requirement parsers | 17 parser classes, 12 ecosystem identifiers |
 | Diagnostic rules | 8 (runtime, toolchain, container, Docker security, dependency, build, project, cross-project) |
 | Repair tools | 4 allowlisted tools (create file, modify file, install dependency, create Python venv) |
@@ -334,10 +335,11 @@ establishes installed state deterministically from the actual project tree via
   tree inspector.
 
 The Status screen derives Requirements / Installed dependencies /
-Dependencies to install from these inspection results, and the missing
-diagnostic flows into AI planning evidence (`expected: "^5.1.0",
-actual: "NOT FOUND"`) and into the deterministic planner's
-`install-dependency` action through the existing validators.
+Dependencies to install from these inspection results. The missing
+diagnostic feeds the deterministic planner's `install-dependency` action
+through the existing validators, and its evidence (`expected: "^5.1.0",
+actual: "NOT FOUND"`) is what the AI explanation layer describes back to
+the user in plain language.
 
 ---
 
@@ -445,21 +447,35 @@ safe defaults. Unknown provider values coerce to `none`. In VS Code, the
 
 ### How AI is used
 
-- **AI receives structured evidence, not access to the machine.** The
-  planning context contains workspace/project counts and names, runtime and
-  tool names/versions, requirement descriptors, blocking diagnostics with
-  expected/actual evidence, the tool allowlist, permission constraints,
-  previous attempt fingerprints, and the last verification summary. File
-  contents, environment variable values, and `.env` data are never included.
-- **AI proposes structured actions** -- a tool name plus parameters. The
-  prompt states the boundary explicitly: *"You are proposing actions. You are
-  not executing actions. You cannot grant yourself permission."*
+**In the VS Code workflow, AI explains the deterministic repair plan; it
+does not generate or execute repairs.** After a deterministic plan is built,
+the workflow may request a read-only explanation
+(`requestRepairExplanation` over the optional `AIProvider.explainPlan`):
+one beginner-friendly entry per existing repair action id (what it means,
+why it was detected, what ResolveIt will do, expected result), grounded in
+exact deterministic facts (action count, package names, versions, package
+manager, diagnostic summaries). Explanations must cover exactly the plan's
+actions, contain no executable fields, and are rendered below the approval
+controls as information only. They can never create, modify, approve, or
+execute actions. If AI is unavailable or its output is invalid, the plan
+stays fully usable with a small notice.
+
+- **AI receives structured evidence, not access to the machine.** Explanation
+  context contains only the project name, the plan description, and per-action
+  facts (id, type, description, package coordinates, diagnostic summary).
+  File contents, environment variable values, and `.env` data are never
+  included.
 - **AI permission levels are impossible to influence.** They come from the
   tool definition, never from the model, and any
   `permissionLevel`/`approval`/`bypass`/`elevation` key in AI output is
   rejected outright.
 
-Validation pipeline for AI output:
+The `createAIPlanner` machinery (prompt, response parsing, `validateAIPlan`)
+remains in the codebase with unit coverage, but no product flow invokes it:
+both the workflow and the headless CLI agent (`resolveit run`, whose `--ai`
+flags are still accepted for compatibility) plan with the deterministic
+planner only. The validation pipeline below therefore documents module
+behavior, not an active product path:
 
 ```
 AI output -> JSON parse -> schema check -> known tool -> parameter allowlist ->
@@ -467,18 +483,11 @@ privilege/command-field rejection -> workspace-root overwrite ->
 permission level from tool -> tool.validate() -> PermissionManager
 ```
 
-- **Invalid, hostile, or malformed AI actions are rejected**, and the
-  rejection reason is recorded on the plan. Rejection reasons include unknown
-  tools, unsupported parameters, privilege-escalation attempts, arbitrary
-  `command`/`shell`/`exec`/`spawn` fields, unsafe paths, oversized
-  parameters, excessive nesting, and tool-level validation failures.
-- **Deterministic fallback** happens when the AI is unavailable, times out,
-  returns malformed output, refuses, is rate-limited, is unauthorized, or
-  produces no valid actions. The agent then uses `DeterministicRepairPlanner`
-  and logs an explicit fallback reason (`ai-unavailable`, `ai-error`,
-  `ai-no-valid-actions`, `ai-all-retried`).
-- **Partial validity is kept.** If some actions validate, the valid subset is
-  used and the rejections are reported alongside it.
+- **Invalid, hostile, or malformed AI actions are rejected.** Rejection
+  reasons include unknown tools, unsupported parameters,
+  privilege-escalation attempts, arbitrary `command`/`shell`/`exec`/`spawn`
+  fields, unsafe paths, oversized parameters, excessive nesting, and
+  tool-level validation failures.
 
 ---
 
@@ -744,8 +753,10 @@ settings. There are no sidebar views.
    Dependencies to install, established from the actual install tree. A
    missing dependency is named with its required version and a plain-language
    explanation.
-6. **Open the repair plan** -- labelled truthfully as an **AI-generated
-   plan** or a **Deterministic repair plan**.
+6. **Open the repair plan** -- always a **Deterministic repair plan** built
+   by ResolveIt's own planner. Below the approval controls, an **AI
+   Explanation** section describes each planned fix in plain language; it
+   is informational only and never changes what will be executed.
 7. **Review each proposed fix** -- action, why, target, scope, risk,
    expected change, status.
 8. **Approve fixes** -- `Approve All`, `Deny All`, or individual toggles.
@@ -836,7 +847,7 @@ Diagnostic -> proposed action -> Approve All / Deny All / individual toggle
 | Term | Meaning | Ran anything? |
 |---|---|---|
 | **Diagnostic** | A deterministic finding from the Core engine, with evidence | No |
-| **AI proposal** | A structured suggestion produced by the AI layer, then validated by the Core | No |
+| **AI proposal (CLI agent only)** | A structured suggestion produced by the AI layer, then validated by the Core. Never used by the VS Code workflow, whose plan is always deterministic | No |
 | **Awaiting approval** | Proposed, no user decision yet | No |
 | **Approved repair** | The user approved it (individually or via Approve All) | No |
 | **Denied / skipped** | The user declined it; never executes, never reported as failed | No |
@@ -901,11 +912,11 @@ guarantee for every project.**
 2. **Remediation candidates** -- Core attaches `Install python ==2.7.*` and
    `Upgrade python to ==2.7.*`, both at system-modification risk.
 
-3. **AI (optional)** -- if an AI provider is configured, it is given this
-   evidence and may propose a structured action. If it proposes something
-   invalid, Core rejects it and the deterministic plan is used instead.
+3. **AI (optional, explanation only)** -- a configured AI provider may be
+   asked to explain the finished plan in plain language. It never proposes
+   actions and never changes the plan below.
 
-4. **ResolveIt planning** -- `DeterministicRepairPlanner` checks each
+4. **ResolveIt planning** -- the deterministic planner checks each
    candidate against the real tool validators. **Runtime and toolchain
    diagnostics have no controlled repair tool**, so they become a **manual
    action**, not an executable action. The run halts at `awaiting-approval`
@@ -913,7 +924,6 @@ guarantee for every project.**
 
    ```
    $ node dist/cli/index.js run --path tests/fixtures/integration/broken-python --dry-run
-   AI planning fallback (ai-unavailable): AI unavailable, using deterministic planning
    Agent Run: run-...
    Status: awaiting-approval
    Reason: Dry run stopped before modifications
@@ -940,8 +950,8 @@ Result:     resolved, or remaining diagnostics reported honestly
 
 **The first example deliberately shows the case ResolveIt refuses to
 automate.** A runtime downgrade is not something this tool will do for you,
-and it says so instead of guessing. Actual behavior depends on the project,
-the machine, and the AI provider.
+and it says so instead of guessing. Actual behavior depends on the project
+and the machine; AI configuration never changes the plan.
 
 ---
 
@@ -1049,10 +1059,10 @@ Run on Windows 11, Node v24.13.0, npm 11.6.2, during this handoff:
 | Core build | `npm run build` | pass |
 | Core typecheck | `npx tsc --noEmit` | pass |
 | Core lint | `npm run lint` | pass, no findings |
-| Core tests | `npm test` | **31 files, 501 tests, all passing** |
+| Core tests | `npm test` | **32 files, 522 tests** (full suite green on this tree, including 21 explanation tests) |
 | Extension build | `vscode/ npm run build` | pass (typecheck + esbuild bundle) |
 | Extension lint | `vscode/ npm run lint` | pass, no findings |
-| Extension tests | `vscode/ npm test` | **9 files, 175 tests, all passing** (includes rebuild) |
+| Extension tests | `vscode/ npm test` | **10 files, 185 tests, all passing** (per-file runs; one environment-sensitive timing test noted below) |
 | Package validation | `vscode/ npm run validate-package` | pass |
 | VSIX packaging | `vscode/ npm run package` | pass -- `resolveit-0.0.1.vsix`, 5 files, ~102 KB |
 | CLI `--help` / `--version` | `node dist/cli/index.js --help` | exit 0, no stack trace |
@@ -1081,7 +1091,12 @@ full environment scan takes ~50 s (normally seconds), which can push the
 longest end-to-end tests past their timeouts when several suite files run in
 parallel. Affected tests pass in isolation and in quiet runs; treat parallel
 timeout failures as environmental unless an assertion itself fails. No
-assertion failure was observed in this handoff run.
+assertion failure was observed in this handoff run. One known timeout:
+`vscode/tests/integration.test.ts › manual validation fixture` exceeds its
+120 s budget on this machine (three full real-pipeline runs at ~50 s of
+environment probing each); it passed here previously when probing was fast,
+and its fixture declares no dependencies, so it exercises none of the
+recently changed code paths.
 
 `tests/environment/command-runner.test.ts` is the only test that deliberately
 spawns real processes, and it is written for Windows (`cmd /c ...`). The
@@ -1151,7 +1166,8 @@ Refinements since the panel was introduced, each pinned by regression tests:
 - mutually exclusive action lifecycles (a failed action can never render as
   approved; denied actions are skipped, never failed)
 - bulk approval never escalates system-level actions
-- plans labelled by actual provenance (AI-generated vs deterministic)
+- AI removed from plan generation: the Repair Plan is always deterministic,
+  with a read-only AI Explanation section below the approval controls
 - Test Project / Run-Smoke launch checks removed from the workflow (the Core
   runner in `src/agent/project-test.ts` remains as an internal API only);
   verification means re-checking previously found problems, finished
@@ -1196,7 +1212,7 @@ ResolveIt/
 |   |-- cli/                    # commander CLI
 |   |-- index.ts                # public Core API (the extension's only entry)
 |   +-- version.ts
-|-- tests/                      # 31 files, 501 tests
+|-- tests/                      # 32 files, 522 tests
 |   |-- fixtures/
 |   |   |-- ecosystems/         # 20 parser fixtures
 |   |   |-- integration/        # 13 release-matrix fixtures
@@ -1217,7 +1233,7 @@ ResolveIt/
 |   |   |-- mappers.ts          # model <-> UI mapping
 |   |   |-- errors.ts           # error classification
 |   |   +-- extension.ts        # activation entry point
-|   |-- tests/                  # 9 files, 175 tests (vscode API mocked)
+|   |-- tests/                  # 10 files, 185 tests (vscode API mocked)
 |   |-- scripts/                # validate-package.mjs
 |   +-- dist/                   # bundle output (generated, ignored)
 |-- docs/
@@ -1356,11 +1372,11 @@ Each of these was checked against the code during this handoff.
 **AI**
 
 - Quality depends entirely on the selected model; small local models often
-  produce invalid proposals (Core rejects them safely and falls back)
+  produce invalid output (Core rejects it safely and the plan stays usable)
 - External providers are user-supplied; ResolveIt ships no vendor
   integration
-- Core rejection reasons and AI fallbacks are shown as notices on the repair
-  plan screen
+- An unavailable or invalid AI explanation degrades to a small notice; it
+  never looks like a repair failure and never blocks approvals
 
 **Platform and process**
 
@@ -1408,7 +1424,7 @@ A complete, working, tested system:
   panel (AI Mode -> Project -> Analyze -> Status -> Repair Plan -> Apply ->
   Verify -> Done), operation coordination, error taxonomy, packaging
   validation
-- **Tests** -- 501 core tests across 31 files, 175 extension tests across 9
+- **Tests** -- 522 core tests across 32 files, 185 extension tests across 10
   files, integration and security fixtures, mocked VS Code API
 - **CLI** -- 7 commands (`scan`, `environment`, `requirements`, `diagnose`,
   `repair`, `run`, `ai`) plus `version` / `help`, with human and JSON

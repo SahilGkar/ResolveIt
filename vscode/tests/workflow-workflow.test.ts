@@ -48,11 +48,9 @@ interface Harness {
 function harness(options: {
   executeApproved?: (plan: RepairPlan, approved: string[]) => Promise<{ results: Array<{ action: RepairAction; result: RepairResult }>; success: boolean }>;
   verify?: () => Promise<{ resolved: string[]; remaining: string[]; current: never[] }>;
-  planRepairsSmart?: () => Promise<{
+  planDeterministicRepairs?: () => Promise<{
     plan: RepairPlan;
     diagnostics: never[];
-    aiUsed: boolean;
-    aiRejections: string[];
     manualActions: never[];
   }>;
   aiProvider?: 'none' | 'local' | 'external';
@@ -80,9 +78,9 @@ function harness(options: {
         return { results, success: true };
       }),
     verifyAgainstPrevious: options.verify ?? (async () => ({ resolved: ['x'], remaining: [] as string[], current: [] as never[] })),
-    planRepairsSmart:
-      options.planRepairsSmart ??
-      (async () => ({ plan: makePlan(2), diagnostics: [] as never[], aiUsed: false, aiRejections: [] as string[], manualActions: [] as never[] })),
+    planDeterministicRepairs:
+      options.planDeterministicRepairs ??
+      (async () => ({ plan: makePlan(2), diagnostics: [] as never[], manualActions: [] as never[] })),
   };
 
   const ctx: WorkflowCommandContext = {
@@ -750,7 +748,7 @@ describe('approval decisions survive re-planning by fingerprint', () => {
       prerequisites: [],
     });
     const h = harness({
-      planRepairsSmart: async () => ({
+      planDeterministicRepairs: async () => ({
         plan: {
           id: 'plan-new',
           name: 'plan',
@@ -759,8 +757,6 @@ describe('approval decisions survive re-planning by fingerprint', () => {
           requiresApproval: true,
         },
         diagnostics: [],
-        aiUsed: false,
-        aiRejections: [],
         manualActions: [],
       }),
     });

@@ -57,12 +57,12 @@ AI Mode → Project → Analyze → Status → Repair Plan → Apply → Verify 
 There are no generic Back/Next controls: every screen offers only the action
 that actually moves forward from the current stage.
 
-1. **AI Mode** — choose how ResolveIt reasons: Local AI (Ollama-compatible),
-   External AI (OpenAI-compatible), or Deterministic / No AI. Each option shows
+1. **AI Mode** — choose No AI, Local AI, or External. AI only explains
+   repair plans; it never creates them. Each option shows
    a probed status — Connected, Not reachable, Not configured, or Not checked —
    and "Connected" is only ever shown after a successful probe. Selecting a mode
    writes `resolveit.ai.provider`. API keys are never shown; they stay in
-   environment variables / settings.
+   environment variables.
 2. **Project** — name and workspace path. Checking your project looks for
    missing tools, broken setup, and configuration problems; nothing is changed.
 3. **Analyze** — runs the Core pipeline (scan → environment → requirements →
@@ -77,11 +77,15 @@ that actually moves forward from the current stage.
    A missing dependency names the package and offers **View Repair Plan**;
    a fully satisfied project states that plainly and offers
    **Verify Project**. One primary action, never a wall of buttons.
-5. **Repair Plan** — every proposed fix is a card with Action, Why, Target,
-   Scope, Risk, Expected change, and Status. The plan is labelled truthfully:
-   **AI-generated plan** only when the AI planner produced validated actions,
-   otherwise **Deterministic repair plan**. Core rejection reasons, AI
-   fallbacks, and manual-action items are shown as notices, not hidden.
+5. **Repair Plan** — always a **Deterministic repair plan** built by
+   ResolveIt's own planner; AI is never involved in creating it. Every
+   proposed fix is a card with Action, Why, Target,
+   Scope, Risk, Expected change, and Status. Manual-action items are shown as
+   notices, not hidden.
+   Below the approval controls, an **AI Explanation** section explains each
+   planned fix in plain language. It is informational only — the deterministic
+   plan above it remains the sole source of what ResolveIt will execute. If
+   AI is unavailable, a small notice says so and the plan stays fully usable.
 6. **Approval** — `Approve All`, `Deny All`, and per-action toggles with a
    live `N / M approved` count. `Approve All` never approves system-level
    actions; those need an individual decision. Nothing executes on approval.
@@ -173,11 +177,13 @@ The AI Mode screen shows provider, model, endpoint, and availability — never
 API keys. Keys are accepted only from environment variables and are never
 stored in workspace settings, extension state, logs, or the repository.
 
-When AI mode is selected, planning goes through the existing AI planner
-abstraction (`createAIPlanner`): structured evidence, Core validation of every
-proposed action (`validateAIPlan`), no arbitrary shell commands, and automatic
-deterministic fallback when the provider is unavailable or every proposal is
-rejected. The UI reports which path produced the plan.
+When AI mode is selected, the Repair Plan screen requests a read-only
+explanation of the deterministic plan (`requestRepairExplanation` over the
+optional `AIProvider.explainPlan`): one validated entry per planned action,
+rendered below the approval controls. The explanation can never create,
+modify, approve, or execute actions. (The headless CLI agent also plans
+deterministically; `createAIPlanner` remains only as tested module code with
+no product callers.)
 
 ## Workspace handling
 
